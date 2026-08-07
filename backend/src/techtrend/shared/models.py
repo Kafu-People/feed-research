@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -27,6 +28,8 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from techtrend.platform.db import Base
+
+EMBEDDING_DIMS = 384  # keep in sync with shared/read/embed.py (semi-permanent)
 
 
 class Site(Base):
@@ -96,6 +99,7 @@ class Story(Base):
     hedge_score: Mapped[float | None] = mapped_column(Float)
     importance: Mapped[float | None] = mapped_column(Float)
     facts: Mapped[list[dict[str, str]]] = mapped_column(JSONB, nullable=False, server_default="[]")
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIMS))
     judged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -130,6 +134,7 @@ class Article(Base):
     story_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("stories.id", ondelete="SET NULL")
     )
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIMS))
     fetched_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -102,6 +102,51 @@ def seed_sites_cmd() -> None:
     typer.echo(f"sites={out['sites']} endpoints={out['endpoints']}")
 
 
+@app.command("print-top-stories")
+def print_top_stories_cmd(limit: int = 15) -> None:
+    """The day's top stories by importance -- the M2 acceptance test is
+    reading these three mornings running and finding them worth it."""
+    bootstrap()
+    from sqlalchemy import text as sql
+
+    from techtrend.platform.db import session_scope
+
+    async def _go() -> None:
+        async with session_scope() as s:
+            rows = await s.execute(
+                sql("""
+                    SELECT st.importance, st.novelty_score, st.story_type,
+                           st.source_count, a.title, st.summary
+                      FROM stories st JOIN articles a ON a.id = st.display_article_id
+                     WHERE st.judged_at IS NOT NULL
+                       AND st.created_at > now() - interval '48 hours'
+                     ORDER BY st.importance DESC NULLS LAST
+                     LIMIT :n
+                """),
+                {"n": limit},
+            )
+            for r in rows:
+                nov = f"{r.novelty_score:.2f}" if r.novelty_score is not None else "--"
+                typer.echo(
+                    f"[{r.importance:.2f}] nov={nov} {r.story_type or 'unjudged':<22}"
+                    f" {r.source_count:>2}src  {r.title[:70]}"
+                )
+                if r.summary:
+                    typer.echo(f"       {r.summary[:150]}")
+
+    asyncio.run(_go())
+
+
+@app.command("backfill-embeddings")
+def backfill_embeddings_cmd(batch: int = 64) -> None:
+    """Embed + entity-extract articles that predate the embedding column."""
+    bootstrap()
+    from techtrend.shared.read.backfill import backfill_embeddings
+
+    n = asyncio.run(backfill_embeddings(batch))
+    typer.echo(f"embedded {n} articles")
+
+
 @app.command()
 def version() -> None:
     typer.echo(__version__)
@@ -129,6 +174,18 @@ async def _read(job: queue.Job) -> None:
     await read_worker.run(job)
 
 
+async def _group(job: queue.Job) -> None:
+    from techtrend.shared.group import worker as group_worker
+
+    await group_worker.run(job)
+
+
+async def _judge(job: queue.Job) -> None:
+    from techtrend.shared.judge import worker as judge_worker
+
+    await judge_worker.run(job)
+
+
 async def _maintenance(job: queue.Job) -> None:
     reclaimed = await queue.reap_stale()
     if reclaimed:
@@ -141,8 +198,8 @@ async def _maintenance(job: queue.Job) -> None:
 HANDLERS = {
     "collect": _collect,
     "read": _read,
-    "group": _noop,
-    "judge": _noop,
+    "group": _group,
+    "judge": _judge,
     "match": _noop,
     "feedback": _noop,
     "maintenance": _maintenance,

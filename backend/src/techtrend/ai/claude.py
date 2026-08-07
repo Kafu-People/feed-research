@@ -36,8 +36,12 @@ class Refused(Exception):
 class ClaudeClient:
     def __init__(self) -> None:
         # Credentials resolve from the environment (ANTHROPIC_API_KEY, or an
-        # `ant auth login` profile). Never hardcode a key.
-        self._c = anthropic.AsyncAnthropic(max_retries=3, timeout=120.0)
+        # `ant auth login` profile). Never hardcode a key. Settings also loads
+        # ANTHROPIC_API_KEY from .env so local dev works without an export.
+        key = settings().anthropic_api_key
+        self._c = anthropic.AsyncAnthropic(
+            api_key=key.get_secret_value() if key else None, max_retries=3, timeout=120.0
+        )
 
     async def judge(self, title: str, body: str, **kw: object) -> JudgeResult:
         resp = await self._c.messages.parse(

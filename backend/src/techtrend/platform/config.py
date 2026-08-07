@@ -45,7 +45,15 @@ class Settings(BaseSettings):
     fetch_timeout_s: float = 20.0
     respect_robots: bool = True
 
+    # --- embeddings ------------------------------------------------------
+    # SEMI-PERMANENT: changing the model is a corpus-wide re-embed.
+    embedding_model: str = "BAAI/bge-small-en-v1.5"
+    embedding_fake: bool = False  # deterministic vectors; tests set this
+
     # --- ai -------------------------------------------------------------
+    # Not TT_-prefixed: same var the Anthropic SDK reads from the process
+    # env. Loading it here too makes `.env` sufficient in local dev.
+    anthropic_api_key: SecretStr | None = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
     ai_model: str = "claude-opus-5"
     ai_judge_effort: Effort = "medium"
     ai_distill_effort: Effort = "low"
@@ -54,9 +62,12 @@ class Settings(BaseSettings):
     ai_fake: bool = False
 
     # --- quality knobs (swept by the harnesses, not guessed) -------------
+    # Calibrated 2026-08-07 on the first live corpus: real cross-outlet
+    # duplicates score title_j 0.17-0.50, entity_j 0.29-0.47; near-miss
+    # different-event pairs (cos ~0.97 listicles) score title_j < 0.1.
     cluster_cos_min: float = 0.86
-    cluster_title_min: float = 0.30
-    cluster_entity_min: float = 0.50
+    cluster_title_min: float = 0.15
+    cluster_entity_min: float = 0.20
     novelty_window_days: int = 30
     group_window_hours: int = 72
     match_vector_topk: int = 200

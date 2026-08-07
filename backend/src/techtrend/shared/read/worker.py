@@ -18,13 +18,17 @@ from techtrend.platform import blobs, queue, telemetry
 from techtrend.platform.db import session_scope
 from techtrend.shared.collect.fetcher import RobotsDisallowed
 from techtrend.shared.collect.worker import fetcher
+from techtrend.shared.read.embed import embed_async, embedding_input
+from techtrend.shared.read.entities import extract_entities
 from techtrend.shared.read.extract import Extraction, extract, parse_date
 
 _UPSERT = text("""
     INSERT INTO articles (url, url_hash, site_id, title, published_at, author,
-                          image_url, language, text_key, html_key, extraction)
+                          image_url, language, text_key, html_key, extraction,
+                          entities, embedding)
     VALUES (:url, :url_hash, :site_id, :title, :published_at, :author,
-            :image_url, :language, :text_key, :html_key, CAST(:extraction AS jsonb))
+            :image_url, :language, :text_key, :html_key, CAST(:extraction AS jsonb),
+            :entities, CAST(:embedding AS vector))
     ON CONFLICT (url_hash) DO UPDATE
        SET title = EXCLUDED.title,
            author = EXCLUDED.author,
@@ -32,7 +36,9 @@ _UPSERT = text("""
            language = EXCLUDED.language,
            text_key = COALESCE(EXCLUDED.text_key, articles.text_key),
            html_key = COALESCE(EXCLUDED.html_key, articles.html_key),
-           extraction = EXCLUDED.extraction
+           extraction = EXCLUDED.extraction,
+           entities = EXCLUDED.entities,
+           embedding = EXCLUDED.embedding
     RETURNING id
 """)
 
@@ -90,6 +96,9 @@ async def run(job: queue.Job) -> None:
     if published > now + timedelta(hours=1):
         published = now
 
+    body_text = ext.body.text if ext and ext.body else None
+    (vector,) = await embed_async([embedding_input(title.strip(), body_text)])
+
     article_id = await _upsert(
         {
             "url": url,
@@ -103,6 +112,8 @@ async def run(job: queue.Job) -> None:
             "text_key": text_key,
             "html_key": html_key,
             "extraction": _extraction_json(ext, resp.status if resp else None),
+            "entities": extract_entities(title, body_text),
+            "embedding": str(vector),
         }
     )
     telemetry.log.info(
