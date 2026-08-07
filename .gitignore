@@ -1,0 +1,25 @@
+# --- python -------------------------------------------------------------
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.import_linter_cache/
+
+# --- node ---------------------------------------------------------------
+node_modules/
+.next/
+.expo/
+*.tsbuildinfo
+
+# --- secrets ------------------------------------------------------------
+.env
+.env.local
+.env.*.local
+
+# --- build / os ---------------------------------------------------------
+dist/
+build/
+.DS_Store
