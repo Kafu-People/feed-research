@@ -110,10 +110,11 @@ async def enqueue(
     priority: int = 100,
     delay_s: float = 0.0,
     session: AsyncSession | None = None,
-) -> None:
+) -> bool:
     """Idempotent by construction: UNIQUE (stage, key) + ON CONFLICT DO NOTHING.
 
     Pass `session` to commit the job with the write that caused it.
+    Returns True if a new job row was inserted, False if it already existed.
     """
     import json
 
@@ -125,10 +126,11 @@ async def enqueue(
         "delay_s": delay_s,
     }
     if session is not None:
-        await session.execute(_ENQUEUE, params)
-        return
-    async with session_scope() as s:
-        await s.execute(_ENQUEUE, params)
+        result = await session.execute(_ENQUEUE, params)
+    else:
+        async with session_scope() as s:
+            result = await s.execute(_ENQUEUE, params)
+    return bool(cast("CursorResult[Any]", result).rowcount or 0)
 
 
 async def complete(job_id: int) -> None:
@@ -157,6 +159,19 @@ async def reap_stale() -> int:
     """
     async with session_scope() as s:
         result = await s.execute(_REAP, {"lease": settings().job_lease_minutes})
+        return int(cast("CursorResult[Any]", result).rowcount or 0)
+
+
+_PURGE = text("""
+    DELETE FROM jobs WHERE state = 'done' AND created_at < now() - interval '1 day'
+""")
+
+
+async def purge_done() -> int:
+    """Done rows have served their idempotency window; the durable dedup is the
+    domain unique key (e.g. articles.url_hash), not the jobs table."""
+    async with session_scope() as s:
+        result = await s.execute(_PURGE)
         return int(cast("CursorResult[Any]", result).rowcount or 0)
 
 

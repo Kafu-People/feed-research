@@ -21,6 +21,11 @@ dependencies = [
     "redis>=5.2",
     "boto3>=1.35",
     "httpx>=0.28",
+    # collect
+    "feedparser>=6.0",
+    "defusedxml>=0.7",
+    # read
+    "trafilatura>=2.0",
     # ai
     "anthropic>=0.40",
     # cli / telemetry
@@ -63,6 +68,8 @@ ignore = ["S101"]  # assert is fine in tests
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S"]
 "migrations/*" = ["E501"]
+# The source table is one site per line on purpose -- greppable and diffable.
+"src/techtrend/shared/collect/seeds.py" = ["E501"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -72,7 +79,7 @@ mypy_path = "src"
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["boto3.*", "botocore.*", "pgvector.*"]
+module = ["boto3.*", "botocore.*", "pgvector.*", "feedparser.*", "defusedxml.*", "trafilatura.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

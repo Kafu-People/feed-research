@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     s3_bucket: str = "techtrend-local"
     s3_endpoint: str | None = None  # set for MinIO locally
+    s3_access_key: str = "dev"  # MinIO only; ignored when endpoint is unset
+    s3_secret_key: str = "devdevdev"  # noqa: S105 - local MinIO default; prod forbids s3_endpoint
 
     # --- crawler --------------------------------------------------------
     user_agent: str = "TechTrendBot/1.0 (+https://techtrend.example/bot; bot@techtrend.example)"

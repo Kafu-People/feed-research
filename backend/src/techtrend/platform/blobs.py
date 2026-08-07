@@ -14,7 +14,26 @@ from techtrend.platform.config import settings
 @lru_cache
 def _s3() -> Any:
     s = settings()
-    return boto3.client("s3", endpoint_url=s.s3_endpoint) if s.s3_endpoint else boto3.client("s3")
+    if s.s3_endpoint:
+        # MinIO locally: explicit creds. Prod uses the default chain (IAM role).
+        return boto3.client(
+            "s3",
+            endpoint_url=s.s3_endpoint,
+            aws_access_key_id=s.s3_access_key,
+            aws_secret_access_key=s.s3_secret_key,
+        )
+    return boto3.client("s3")
+
+
+@lru_cache
+def ensure_bucket() -> None:
+    """Local convenience only -- prod buckets are provisioned, not created at boot."""
+    if settings().s3_endpoint is None:
+        return
+    try:
+        _s3().head_bucket(Bucket=settings().s3_bucket)
+    except Exception:
+        _s3().create_bucket(Bucket=settings().s3_bucket)
 
 
 def text_key(url_hash: str) -> str:

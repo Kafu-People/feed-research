@@ -92,6 +92,16 @@ def seed_demo_cmd(
     typer.echo(f"login: {email} / {password}")
 
 
+@app.command("seed-sites")
+def seed_sites_cmd() -> None:
+    """Load the curated tech source list into sites/endpoints (idempotent)."""
+    bootstrap()
+    from techtrend.shared.collect.seed import seed_sites
+
+    out = asyncio.run(seed_sites())
+    typer.echo(f"sites={out['sites']} endpoints={out['endpoints']}")
+
+
 @app.command()
 def version() -> None:
     typer.echo(__version__)
@@ -107,15 +117,30 @@ async def _noop(job: queue.Job) -> None:
     telemetry.log.info("job.noop", stage=job.stage, key=job.key)
 
 
+async def _collect(job: queue.Job) -> None:
+    from techtrend.shared.collect import worker as collect_worker
+
+    await collect_worker.run(job)
+
+
+async def _read(job: queue.Job) -> None:
+    from techtrend.shared.read import worker as read_worker
+
+    await read_worker.run(job)
+
+
 async def _maintenance(job: queue.Job) -> None:
     reclaimed = await queue.reap_stale()
     if reclaimed:
         telemetry.log.info("jobs.reaped", count=reclaimed)
+    purged = await queue.purge_done()
+    if purged:
+        telemetry.log.info("jobs.purged", count=purged)
 
 
 HANDLERS = {
-    "collect": _noop,
-    "read": _noop,
+    "collect": _collect,
+    "read": _read,
     "group": _noop,
     "judge": _noop,
     "match": _noop,
@@ -137,7 +162,16 @@ async def _run_worker(stages: list[str], concurrency: int) -> None:
     sem = asyncio.Semaphore(concurrency)
     telemetry.log.info("worker.start", stages=stages, concurrency=concurrency)
 
+    sweep = None
+    if "collect" in stages:
+        from techtrend.shared.collect import worker as collect_worker
+
+        sweep = collect_worker.sweep_due
+
     while not stop.is_set():
+        if sweep is not None:
+            # The scheduler is the `next_check_at` column; this is its only reader.
+            await sweep()
         jobs = await queue.claim(stages, batch=concurrency)
         if not jobs:
             # Graceful shutdown: stop claiming, let in-flight jobs finish.
