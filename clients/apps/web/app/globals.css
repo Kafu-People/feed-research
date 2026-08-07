@@ -1,0 +1,40 @@
+:root { --fg:#111; --muted:#666; --line:#e5e5e5; --bg:#fff; --accent:#0b5; }
+* { box-sizing: border-box; }
+body {
+  margin:0; background:var(--bg); color:var(--fg);
+  font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+/* Single column, even on a 27" monitor. The product is ONE ordered list whose
+   ranking ignores topic boundaries; a grid would imply a hierarchy that does
+   not exist and would destroy the meaning of position. */
+main { max-width: 42rem; margin: 0 auto; padding: 2rem 1rem 4rem; }
+h1 { font-size: 1.25rem; letter-spacing: -0.01em; }
+ol.cards { list-style: none; margin: 0; padding: 0; }
+.card { border-bottom: 1px solid var(--line); padding: 1.25rem 0; }
+.card h2 { font-size: 1.05rem; margin: 0 0 .35rem; font-weight: 600; }
+.card h2 a { color: inherit; text-decoration: none; }
+.card h2 a:hover { text-decoration: underline; }
+.card .meta { color: var(--muted); font-size: .82rem; margin: 0 0 .5rem; }
+.card .summary { margin: 0; color: #333; }
+.label {
+  margin-left:.5rem; padding:.1rem .45rem; border:1px solid var(--line);
+  border-radius:1rem; font-size:.72rem; color:var(--muted);
+}
+.hide { margin-top:.6rem; background:none; border:0; color:var(--muted);
+        font-size:.78rem; cursor:pointer; padding:0; }
+.hide:hover { color: var(--fg); }
+.day-end { text-align:center; color:var(--muted); margin:2.5rem 0 1rem;
+           font-size:.9rem; border-top:1px solid var(--line); padding-top:1.5rem; }
+a:focus-visible, button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.chips { display:flex; flex-wrap:wrap; gap:.4rem; margin:.4rem 0 1rem; }
+.chip { border:1px solid var(--line); border-radius:1rem; padding:.2rem .6rem; font-size:.85rem; }
+.chip button { background:none; border:0; margin-left:.35rem; cursor:pointer; color:var(--muted); }
+input[type=text] { width:100%; padding:.7rem; border:1px solid var(--line); border-radius:.4rem; font-size:1rem; }
+button.primary { background:var(--fg); color:#fff; border:0; border-radius:.4rem;
+                 padding:.6rem 1.1rem; font-size:.95rem; cursor:pointer; }
+.rate { color:var(--muted); font-size:.9rem; }
+@media (prefers-color-scheme: dark) {
+  :root { --fg:#eee; --muted:#999; --line:#2a2a2a; --bg:#0d0d0d; }
+  .card .summary { color:#ccc; }
+  button.primary { background:#eee; color:#111; }
+}

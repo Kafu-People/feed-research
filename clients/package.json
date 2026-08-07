@@ -1,0 +1,10 @@
+{
+  "name": "techtrend-clients",
+  "private": true,
+  "scripts": {
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "build": "pnpm -r build"
+  },
+  "devDependencies": { "typescript": "^5.7.2" }
+}

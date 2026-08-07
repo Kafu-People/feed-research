@@ -1,0 +1,16 @@
+{
+  "name": "@techtrend/api-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "generate": "openapi-typescript openapi.json -o src/schema.d.ts",
+    "test": "echo 'no tests'"
+  },
+  "dependencies": { "@techtrend/core": "workspace:*" },
+  "devDependencies": { "typescript": "^5.7.2", "openapi-typescript": "^7.4.4" }
+}
