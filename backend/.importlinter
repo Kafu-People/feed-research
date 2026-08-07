@@ -1,0 +1,40 @@
+[importlinter]
+root_package = techtrend
+
+# Invariant #11: information flows down the three layers only.
+# A PR that makes `shared` import from `personal` fails CI.
+[importlinter:contract:layers]
+name = Information flows downward only (invariant #11)
+type = layers
+layers =
+    techtrend.api
+    techtrend.personal
+    techtrend.topic
+    techtrend.shared
+    techtrend.platform
+
+# A request handler must not make an AI call directly, and the personal layer
+# must never make one at all. The API reaches the distiller *through*
+# topic.distill (api -> topic -> ai), which is why this checks DIRECT imports
+# only -- the layers contract above constrains the rest of the path.
+[importlinter:contract:ai-is-not-called-directly]
+name = Only worker stages and topic/ call the AI layer
+type = forbidden
+allow_indirect_imports = True
+source_modules =
+    techtrend.api
+    techtrend.personal
+forbidden_modules =
+    techtrend.ai
+
+# Infrastructure knows nothing about the domain.
+[importlinter:contract:platform-is-independent]
+name = Platform knows nothing about domain
+type = forbidden
+source_modules =
+    techtrend.platform
+forbidden_modules =
+    techtrend.shared
+    techtrend.topic
+    techtrend.personal
+    techtrend.ai
