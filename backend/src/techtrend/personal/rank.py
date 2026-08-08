@@ -52,6 +52,7 @@ class Candidate:
     match_score: float
     topic_id: int
     topic_label: str
+    description: str | None = None
     matched_by: list[str] = field(default_factory=list)
     subject: str = "default"
     story_type: str = "analysis"

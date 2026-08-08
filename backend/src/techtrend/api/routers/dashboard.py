@@ -21,7 +21,7 @@ _CANDIDATES = text("""
     SELECT st.id, a.title, st.summary, si.name, si.id, st.source_count,
            a.published_at, a.image_url, a.url, st.importance,
            m.match_score, t.id, COALESCE(sub.label, t.title), m.matched_by,
-           COALESCE(st.story_type, 'analysis')
+           COALESCE(st.story_type, 'analysis'), a.description
       FROM matches m
       JOIN subscriptions sub ON sub.topic_id = m.topic_id AND sub.user_id = :uid
       JOIN topics  t  ON t.id  = m.topic_id
@@ -54,6 +54,7 @@ def _to_card(c: Candidate) -> CardOut:
         story_id=c.story_id,
         headline=c.headline,
         summary=c.summary,
+        description=c.description,
         source_name=c.source_name,
         source_count=c.source_count,
         published_at=c.published_at,
@@ -84,6 +85,7 @@ async def dashboard(user: UserDep, db: SessionDep) -> DashboardOut:
             topic_label=r[12],
             matched_by=list(r[13] or []),
             story_type=r[14],
+            description=r[15],
         )
         for r in rows
     ]

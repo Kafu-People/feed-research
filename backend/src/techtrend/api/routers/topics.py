@@ -77,6 +77,12 @@ async def create_topic(body: TopicIn, user: UserDep, db: SessionDep) -> TopicOut
     fp = fingerprint(body.must, body.should, body.entities, body.exclude)
     topic = await db.scalar(select(Topic).where(Topic.fingerprint == fp))
     if topic is None:
+        from techtrend.shared.read.embed import embed_async
+        from techtrend.topic.match import topic_embedding_input
+
+        (vec,) = await embed_async(
+            [topic_embedding_input(body.title, body.must, body.should, body.entities)]
+        )
         topic = Topic(
             fingerprint=fp,
             title=body.title,
@@ -84,6 +90,7 @@ async def create_topic(body: TopicIn, user: UserDep, db: SessionDep) -> TopicOut
             should=body.should,
             entities=body.entities,
             exclude=body.exclude,
+            embedding=vec,
         )
         db.add(topic)
         await db.flush()

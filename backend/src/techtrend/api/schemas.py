@@ -27,6 +27,9 @@ class CardOut(BaseModel):
     story_id: int
     headline: str
     summary: str | None = None  # null when unjudged: degrade, don't hide
+    # The publisher's own preview snippet (og:description) -- shown QUOTED with
+    # attribution when we have no summary of our own. Not the body.
+    description: str | None = None
     source_name: str
     source_count: int
     published_at: datetime

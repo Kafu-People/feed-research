@@ -92,6 +92,54 @@ def seed_demo_cmd(
     typer.echo(f"login: {email} / {password}")
 
 
+@app.command("seed-topics")
+def seed_topics_cmd(email: str = "demo@example.com") -> None:
+    """Create the ten hand-written topics and subscribe a user to all of them."""
+    bootstrap()
+    from sqlalchemy import select
+
+    from techtrend.personal.models import Subscription, User
+    from techtrend.platform.db import session_scope
+    from techtrend.shared.read.embed import embed_async
+    from techtrend.topic.fingerprint import fingerprint, normalise_term
+    from techtrend.topic.match import topic_embedding_input
+    from techtrend.topic.models import Topic, TopicTerm
+    from techtrend.topic.seed import TOPICS
+
+    async def _go() -> None:
+        async with session_scope() as s:
+            user = await s.scalar(select(User).where(User.email == email))
+            if user is None:
+                typer.echo(f"no user {email} — run seed-demo first")
+                raise typer.Exit(1)
+            created = 0
+            for t in TOPICS:
+                fp = fingerprint(t["must"], t["should"], t["entities"], t["exclude"])
+                topic = await s.scalar(select(Topic).where(Topic.fingerprint == fp))
+                if topic is None:
+                    (vec,) = await embed_async(
+                        [topic_embedding_input(t["title"], t["must"], t["should"], t["entities"])]
+                    )
+                    topic = Topic(
+                        fingerprint=fp, title=t["title"], must=t["must"], should=t["should"],
+                        entities=t["entities"], exclude=t["exclude"], embedding=vec,
+                    )
+                    s.add(topic)
+                    await s.flush()
+                    terms = {normalise_term(x) for x in (*t["must"], *t["should"], *t["entities"])}
+                    for term in sorted(terms - {""}):
+                        s.add(TopicTerm(term=term, topic_id=topic.id))
+                    created += 1
+                sub = await s.scalar(select(Subscription).where(
+                    Subscription.user_id == user.id, Subscription.topic_id == topic.id))
+                if sub is None:
+                    s.add(Subscription(user_id=user.id, topic_id=topic.id, label=topic.title))
+                    topic.subscriber_count += 1
+        typer.echo(f"topics created: {created}, user subscribed to all {len(TOPICS)}")
+
+    asyncio.run(_go())
+
+
 @app.command("seed-sites")
 def seed_sites_cmd() -> None:
     """Load the curated tech source list into sites/endpoints (idempotent)."""
@@ -201,6 +249,12 @@ async def _judge(job: queue.Job) -> None:
     await judge_worker.run(job)
 
 
+async def _match(job: queue.Job) -> None:
+    from techtrend.topic import worker as match_worker
+
+    await match_worker.run(job)
+
+
 async def _maintenance(job: queue.Job) -> None:
     reclaimed = await queue.reap_stale()
     if reclaimed:
@@ -215,7 +269,7 @@ HANDLERS = {
     "read": _read,
     "group": _group,
     "judge": _judge,
-    "match": _noop,
+    "match": _match,
     "feedback": _noop,
     "maintenance": _maintenance,
 }

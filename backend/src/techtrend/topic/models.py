@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     DateTime,
@@ -38,6 +39,7 @@ class Topic(Base):
     exclude: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, server_default="{}")
     entities: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, server_default="{}")
     floor: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.35")
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(384))
     subscriber_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     match_rate: Mapped[float | None] = mapped_column(Float)
     created_at: Mapped[datetime] = mapped_column(

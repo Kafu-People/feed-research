@@ -29,6 +29,7 @@ interface RawCard {
   story_id: number;
   headline: string;
   summary: string | null;
+  description: string | null;
   source_name: string;
   source_count: number;
   published_at: string;
@@ -42,6 +43,7 @@ const toCard = (c: RawCard): Card => ({
   storyId: c.story_id,
   headline: c.headline,
   summary: c.summary,
+  description: c.description ?? null,
   sourceName: c.source_name,
   sourceCount: c.source_count,
   publishedAt: c.published_at,

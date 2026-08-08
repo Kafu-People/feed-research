@@ -44,6 +44,14 @@ export function CardItem({ card, position }: { card: Card; position: number }) {
             source, never hide the event. */}
         {m.showSummary && <p className="summary">{m.summary}</p>}
 
+        {/* No summary of ours yet: the publisher's own preview snippet,
+            quoted and attributed — their words, never the body. */}
+        {m.showQuote && (
+          <p className="summary quote">
+            &ldquo;{m.quote}&rdquo; — {card.sourceName}
+          </p>
+        )}
+
         <button
           className="hide"
           aria-label={`Hide: ${m.headline}`}

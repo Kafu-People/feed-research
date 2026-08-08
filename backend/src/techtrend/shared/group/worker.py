@@ -48,19 +48,30 @@ _CREATE = text("""
 """)
 
 # source_count is DISTINCT OUTLETS -- the "14 sources" on the card.
+# The importance here is the PRE-JUDGE value: neutral 0.5 novelty, so unjudged
+# stories are rankable (an unjudged story is not a dropped story). Judge
+# overwrites it with the real novelty-driven figure when/if it runs.
 _REFRESH = text("""
     UPDATE stories st
        SET source_count = agg.n_sites,
-           display_article_id = agg.display_id
+           display_article_id = agg.display_id,
+           importance = CASE WHEN st.judged_at IS NULL
+                             THEN 0.45 * 0.5
+                                  + 0.25 * agg.max_authority
+                                  + 0.15 * LEAST(1.0, ln(1 + agg.n_articles) / ln(50))
+                             ELSE st.importance END
       FROM (
         SELECT count(DISTINCT a.site_id) AS n_sites,
+               count(*) AS n_articles,
+               max(s3.authority) AS max_authority,
                (SELECT a2.id FROM articles a2 JOIN sites s2 ON s2.id = a2.site_id
                  WHERE a2.story_id = :story_id
                  ORDER BY 0.5 * s2.authority
                         + 0.2 * (CASE WHEN a2.image_url IS NOT NULL THEN 1 ELSE 0 END) DESC,
                           a2.published_at ASC
                  LIMIT 1) AS display_id
-          FROM articles a WHERE a.story_id = :story_id
+          FROM articles a JOIN sites s3 ON s3.id = a.site_id
+         WHERE a.story_id = :story_id
       ) agg
      WHERE st.id = :story_id
 """)
@@ -107,7 +118,6 @@ async def run(job: queue.Job) -> None:
         if best is not None:
             story_id = best.story_id
             await s.execute(_ATTACH, {"story_id": story_id, "id": art.id})
-            await s.execute(_REFRESH, {"story_id": story_id})
         else:
             story_id = (
                 await s.execute(
@@ -120,13 +130,19 @@ async def run(job: queue.Job) -> None:
                 )
             ).scalar_one()
             await s.execute(_ATTACH, {"story_id": story_id, "id": art.id})
-        # Same transaction: the judge job exists iff the grouping committed.
+        await s.execute(_REFRESH, {"story_id": story_id})
+        # Same transaction: downstream jobs exist iff the grouping committed.
+        # Match is enqueued directly, not only via judge -- judging is optional
+        # (a paid upgrade), and an unjudged story must still reach dashboards.
         await queue.enqueue(
             "judge",
             f"judge:story:{story_id}",
             {"story_id": story_id},
             priority=10 if art.tier == "A" else 100,
             session=s,
+        )
+        await queue.enqueue(
+            "match", f"match:story:{story_id}", {"story_id": story_id}, session=s
         )
     telemetry.log.info("group.done", article_id=art.id, story_id=story_id, merged=best is not None)
 

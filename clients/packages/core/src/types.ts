@@ -24,6 +24,9 @@ export interface Card {
   headline: string;
   /** null when unjudged/refused/failed verification -> degrade, don't hide. */
   summary: string | null;
+  /** The publisher's own preview snippet — shown quoted, with attribution,
+   *  when we have no summary of our own. Never the article body. */
+  description: string | null;
   sourceName: string;
   sourceCount: number;
   publishedAt: string;
