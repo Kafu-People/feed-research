@@ -121,8 +121,13 @@ def seed_topics_cmd(email: str = "demo@example.com") -> None:
                         [topic_embedding_input(t["title"], t["must"], t["should"], t["entities"])]
                     )
                     topic = Topic(
-                        fingerprint=fp, title=t["title"], must=t["must"], should=t["should"],
-                        entities=t["entities"], exclude=t["exclude"], embedding=vec,
+                        fingerprint=fp,
+                        title=t["title"],
+                        must=t["must"],
+                        should=t["should"],
+                        entities=t["entities"],
+                        exclude=t["exclude"],
+                        embedding=vec,
                     )
                     s.add(topic)
                     await s.flush()
@@ -130,8 +135,11 @@ def seed_topics_cmd(email: str = "demo@example.com") -> None:
                     for term in sorted(terms - {""}):
                         s.add(TopicTerm(term=term, topic_id=topic.id))
                     created += 1
-                sub = await s.scalar(select(Subscription).where(
-                    Subscription.user_id == user.id, Subscription.topic_id == topic.id))
+                sub = await s.scalar(
+                    select(Subscription).where(
+                        Subscription.user_id == user.id, Subscription.topic_id == topic.id
+                    )
+                )
                 if sub is None:
                     s.add(Subscription(user_id=user.id, topic_id=topic.id, label=topic.title))
                     topic.subscriber_count += 1
@@ -186,6 +194,50 @@ def print_top_stories_cmd(limit: int = 15) -> None:
                 blurb = r.summary or (f'"{r.description}" — {r.site_name}' if r.description else "")
                 if blurb:
                     typer.echo(f"       {blurb[:170]}")
+
+    asyncio.run(_go())
+
+
+@app.command("fingerprint-study")
+def fingerprint_study_cmd() -> None:
+    """THE most important measurement in the project, and it costs one query.
+
+    If N users produce ~0.3N distinct topics the economics work; if ~N they
+    don't. Run it the day there is real signup data, and keep running it.
+    """
+    bootstrap()
+    from sqlalchemy import text as sql
+
+    from techtrend.platform.db import session_scope
+
+    async def _go() -> None:
+        async with session_scope() as s:
+            row = (
+                await s.execute(
+                    sql("""
+                        SELECT count(*) AS subs,
+                               count(DISTINCT topic_id) AS distinct_topics,
+                               count(DISTINCT user_id) AS users
+                          FROM subscriptions
+                    """)
+                )
+            ).one()
+            top = await s.execute(
+                sql("""
+                    SELECT t.title, t.subscriber_count FROM topics t
+                     WHERE t.subscriber_count > 1
+                     ORDER BY t.subscriber_count DESC LIMIT 10
+                """)
+            )
+        subs, distinct, users = row.subs, row.distinct_topics, row.users
+        ratio = distinct / subs if subs else 0.0
+        typer.echo(f"users={users} subscriptions={subs} distinct_topics={distinct}")
+        typer.echo(
+            f"dedup ratio: {ratio:.2f} distinct per subscription "
+            f"({'GOOD — topics collapse' if ratio < 0.5 else 'WATCH — little collapse yet'})"
+        )
+        for r in top:
+            typer.echo(f"  shared by {r.subscriber_count}: {r.title}")
 
     asyncio.run(_go())
 
@@ -255,6 +307,12 @@ async def _match(job: queue.Job) -> None:
     await match_worker.run(job)
 
 
+async def _feedback(job: queue.Job) -> None:
+    from techtrend.personal import learn
+
+    await learn.run(job)
+
+
 async def _maintenance(job: queue.Job) -> None:
     reclaimed = await queue.reap_stale()
     if reclaimed:
@@ -270,7 +328,7 @@ HANDLERS = {
     "group": _group,
     "judge": _judge,
     "match": _match,
-    "feedback": _noop,
+    "feedback": _feedback,
     "maintenance": _maintenance,
 }
 

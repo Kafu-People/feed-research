@@ -37,7 +37,11 @@ async def post_events(batch: list[EventIn], user: UserDep, db: SessionDep) -> di
             await db.merge(
                 Seen(user_id=user.id, story_id=e.story_id, state=state, position=e.position)
             )
+    # Weight updates run in a worker, coalesced per user -- a skip must not
+    # cost learning work on the interactive path. Enqueued with the events,
+    # in the same transaction.
+    from techtrend.personal.learn import enqueue_for
+
+    await enqueue_for(user.id, session=db)
     await db.commit()
-    # Weight updates run in a worker, coalesced per user per day -- a skip must
-    # not cost a database round-trip on the interactive path.
     return {"accepted": len(batch)}

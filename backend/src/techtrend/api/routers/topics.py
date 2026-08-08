@@ -142,9 +142,7 @@ async def create_topic(body: TopicIn, user: UserDep, db: SessionDep) -> TopicOut
     # committed with the subscription, worked by the match stage.
     from techtrend.platform import queue
 
-    await queue.enqueue(
-        "match", f"match:topic:{topic.id}", {"topic_id": topic.id}, session=db
-    )
+    await queue.enqueue("match", f"match:topic:{topic.id}", {"topic_id": topic.id}, session=db)
     await db.commit()
     await db.refresh(topic)
     return _out(topic)

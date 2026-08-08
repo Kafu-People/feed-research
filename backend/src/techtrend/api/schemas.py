@@ -11,6 +11,16 @@ from enum import StrEnum
 from pydantic import BaseModel, EmailStr, Field
 
 
+class SuggestionOut(BaseModel):
+    """A learned proposal. It changes nothing until the user accepts it."""
+
+    id: int
+    topic_id: int
+    kind: str
+    payload: dict[str, object]
+    evidence: str | None = None
+
+
 class TopicLabel(BaseModel):
     topic_id: int
     label: str

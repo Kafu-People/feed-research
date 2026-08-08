@@ -38,9 +38,7 @@ def _hit(term: str, text: str) -> bool:
     t = normalise_term(term)
     if not t:
         return False
-    return f" {t} " in text or bool(
-        re.search(rf"(?<![a-z0-9]){re.escape(t)}(?![a-z0-9])", text)
-    )
+    return f" {t} " in text or bool(re.search(rf"(?<![a-z0-9]){re.escape(t)}(?![a-z0-9])", text))
 
 
 def cosine(a: list[float], b: list[float]) -> float:

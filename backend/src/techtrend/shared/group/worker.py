@@ -141,9 +141,7 @@ async def run(job: queue.Job) -> None:
             priority=10 if art.tier == "A" else 100,
             session=s,
         )
-        await queue.enqueue(
-            "match", f"match:story:{story_id}", {"story_id": story_id}, session=s
-        )
+        await queue.enqueue("match", f"match:story:{story_id}", {"story_id": story_id}, session=s)
     telemetry.log.info("group.done", article_id=art.id, story_id=story_id, merged=best is not None)
 
 

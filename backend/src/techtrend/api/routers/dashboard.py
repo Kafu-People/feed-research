@@ -10,7 +10,7 @@ from sqlalchemy import select, text
 from techtrend.api.deps import SessionDep, UserDep
 from techtrend.api.schemas import CardOut, DashboardOut, TopicLabel
 from techtrend.personal.models import Seen, Weight
-from techtrend.personal.rank import Candidate, Weights, rank
+from techtrend.personal.rank import Candidate, Weights, rank, select_dashboard
 from techtrend.platform.config import settings
 
 router = APIRouter(tags=["dashboard"])
@@ -21,7 +21,7 @@ _CANDIDATES = text("""
     SELECT st.id, a.title, st.summary, si.name, si.id, st.source_count,
            a.published_at, a.image_url, a.url, st.importance,
            m.match_score, t.id, COALESCE(sub.label, t.title), m.matched_by,
-           COALESCE(st.story_type, 'analysis'), a.description
+           COALESCE(st.story_type, 'analysis'), a.description, sub.personal_excludes
       FROM matches m
       JOIN subscriptions sub ON sub.topic_id = m.topic_id AND sub.user_id = :uid
       JOIN topics  t  ON t.id  = m.topic_id
@@ -67,6 +67,9 @@ def _to_card(c: Candidate) -> CardOut:
 
 @router.get("/dashboard", response_model=DashboardOut)
 async def dashboard(user: UserDep, db: SessionDep) -> DashboardOut:
+    from techtrend.topic.match import _hit as term_hits  # noqa: PLC2701
+    from techtrend.topic.match import searchable
+
     rows = await db.execute(_CANDIDATES, {"uid": user.id})
     candidates = [
         Candidate(
@@ -88,14 +91,19 @@ async def dashboard(user: UserDep, db: SessionDep) -> DashboardOut:
             description=r[15],
         )
         for r in rows
+        # The user's own narrowing of a shared topic (invariant #12's pressure
+        # valve): an accepted personal exclude filters HERE, per subscription.
+        if not any(term_hits(term, searchable(r[1], r[15], []).text) for term in (r[16] or []))
     ]
 
     weights = await _load_weights(db, user.id)
     ranked = rank(candidates, weights, now=datetime.now(UTC))
 
-    limit = settings().dashboard_max_cards
-    cards = [_to_card(c) for c in ranked[:limit]]
-    more = [_to_card(c) for c in ranked[limit : limit + 10]]
+    s = settings()
+    picked = select_dashboard(ranked, s.dashboard_max_cards, s.exploration_slots)
+    picked_ids = {c.story_id for c in picked}
+    cards = [_to_card(c) for c in picked]
+    more = [_to_card(c) for c in ranked if c.story_id not in picked_ids][:10]
 
     # Record position so bias can be corrected later.
     for i, c in enumerate(cards):

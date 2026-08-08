@@ -14,6 +14,7 @@ const card = (over: Partial<Card> = {}): Card => ({
   storyId: 1,
   headline: "Nvidia cleared to resume H20 sales to China",
   summary: "Two sentences in our own words. Reported across outlets.",
+  description: null,
   sourceName: "Reuters",
   sourceCount: 14,
   publishedAt: new Date(Date.now() - 2 * 3600_000).toISOString(),

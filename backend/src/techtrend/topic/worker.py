@@ -92,9 +92,7 @@ async def run(job: queue.Job) -> None:
     story = StoryText(text=st.text, embedding=_parse_vec(row.embedding))
 
     async with session_scope() as s:
-        by_term = {
-            r[0] for r in (await s.execute(_BY_TERM, {"tokens": _tokens(st.text)})).all()
-        }
+        by_term = {r[0] for r in (await s.execute(_BY_TERM, {"tokens": _tokens(st.text)})).all()}
         by_vector: set[int] = set()
         if story.embedding is not None:
             by_vector = {
@@ -122,8 +120,9 @@ async def run(job: queue.Job) -> None:
             story=story,
         )
         if score >= t.floor:
-            rows.append({"topic_id": t.id, "story_id": story_id,
-                         "score": score, "matched_by": matched_by})
+            rows.append(
+                {"topic_id": t.id, "story_id": story_id, "score": score, "matched_by": matched_by}
+            )
 
     if rows:
         async with session_scope() as s:
@@ -159,10 +158,11 @@ async def _backfill_topic(topic_id: int) -> None:
             story=StoryText(text=st.text, embedding=_parse_vec(r.embedding)),
         )
         if score >= t.floor:
-            rows.append({"topic_id": topic_id, "story_id": r.id,
-                         "score": score, "matched_by": matched_by})
+            rows.append(
+                {"topic_id": topic_id, "story_id": r.id, "score": score, "matched_by": matched_by}
+            )
     if rows:
         async with session_scope() as s:
-            for r in rows:
-                await s.execute(_UPSERT, r)
+            for params in rows:
+                await s.execute(_UPSERT, params)
     telemetry.log.info("match.topic_backfill", topic_id=topic_id, matched=len(rows))

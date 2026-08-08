@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from techtrend import __version__
-from techtrend.api.routers import auth, dashboard, events, health, topics
+from techtrend.api.routers import auth, dashboard, events, health, suggestions, topics
 from techtrend.platform import cache, db, telemetry
 from techtrend.platform.config import check_production_invariants, settings
 
@@ -56,6 +56,7 @@ def create_app() -> FastAPI:
     app.include_router(topics.router, prefix="/v1")
     app.include_router(dashboard.router, prefix="/v1")
     app.include_router(events.router, prefix="/v1")
+    app.include_router(suggestions.router, prefix="/v1")
 
     @app.exception_handler(500)
     async def on_error(_: Request, exc: Exception) -> JSONResponse:
