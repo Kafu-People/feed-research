@@ -1,11 +1,60 @@
 "use client";
 
-import { useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 
-import { COPY, rateLabel, type TopicDraft } from "@techtrend/core";
+import { COPY, rateLabel, type Card, type TopicDraft } from "@techtrend/core";
 
-import { api } from "@/lib/api";
+/** Raw wire shape from the same-origin proxy (snake_case). */
+interface RawDraft {
+  title: string;
+  must: string[];
+  should: string[];
+  entities: string[];
+  exclude: string[];
+  ambiguity: string | null;
+  options: string[];
+  count_7d: number;
+  per_day: number;
+  preview: {
+    story_id: number;
+    headline: string;
+    summary: string | null;
+    description: string | null;
+    source_name: string;
+    source_count: number;
+    published_at: string;
+    image_url: string | null;
+    url: string;
+  }[];
+}
+
+const toDraft = (r: RawDraft): TopicDraft => ({
+  title: r.title,
+  must: r.must,
+  should: r.should,
+  entities: r.entities,
+  exclude: r.exclude,
+  ambiguity: r.ambiguity,
+  options: r.options,
+  count7d: r.count_7d,
+  perDay: r.per_day,
+  preview: r.preview.map(
+    (c): Card => ({
+      storyId: c.story_id,
+      headline: c.headline,
+      summary: c.summary,
+      description: c.description,
+      sourceName: c.source_name,
+      sourceCount: c.source_count,
+      publishedAt: c.published_at,
+      imageUrl: c.image_url,
+      url: c.url,
+      topicLabels: [],
+      matchedBy: [],
+    }),
+  ),
+});
 
 /**
  * The screen web exists for.
@@ -20,14 +69,28 @@ function Confirm() {
   const [draft, setDraft] = useState<TopicDraft | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const router = useRouter();
+  const pathname = usePathname();
 
   useEffect(() => {
     if (!sentence) return;
-    api(null)
-      .draftTopic(sentence)
-      .then(setDraft)
+    void fetch("/api/topics/draft", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sentence }),
+    })
+      .then((res) => {
+        if (res.status === 401) {
+          // Reading the sentence needs an account; come straight back after.
+          router.push(`/login?next=${encodeURIComponent(`${pathname}?s=${sentence}`)}`);
+          return null;
+        }
+        if (!res.ok) throw new Error("Could not read that. Try rephrasing?");
+        return res.json() as Promise<RawDraft>;
+      })
+      .then((raw) => raw && setDraft(toDraft(raw)))
       .catch((e: Error) => setError(e.message));
-  }, [sentence]);
+  }, [sentence, router, pathname]);
 
   if (error) return <main><h1>Hmm</h1><p className="rate">{error}</p></main>;
   if (!draft) return <main><h1>Reading that…</h1></main>;
@@ -92,19 +155,30 @@ function Confirm() {
           className="primary"
           disabled={saved}
           onClick={() => {
-            void api(null)
-              .saveTopic({
+            void fetch("/api/topics", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
                 title: draft.title,
                 must: draft.must,
                 should: draft.should,
                 entities: draft.entities,
                 exclude: draft.exclude,
+              }),
+            })
+              .then((res) => {
+                if (!res.ok) throw new Error("Could not save.");
+                setSaved(true);
+                // Matching runs as stories arrive; the dashboard is the payoff.
+                setTimeout(() => {
+                  router.push("/");
+                  router.refresh();
+                }, 600);
               })
-              .then(() => setSaved(true))
               .catch((e: Error) => setError(e.message));
           }}
         >
-          {saved ? "Saved" : "Save"}
+          {saved ? "Saved ✓" : "Save"}
         </button>
       </p>
     </main>

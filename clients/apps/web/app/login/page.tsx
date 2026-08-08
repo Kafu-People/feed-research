@@ -1,18 +1,20 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useState } from "react";
 
-export default function LoginPage() {
+function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [mode, setMode] = useState<"login" | "signup">("login");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const router = useRouter();
+  const next = useSearchParams().get("next") ?? "/";
 
   return (
     <main>
-      <h1>Sign in</h1>
+      <h1>{mode === "login" ? "Sign in" : "Create account"}</h1>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -21,11 +23,12 @@ export default function LoginPage() {
           void fetch("/api/session", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email, password }),
+            body: JSON.stringify({ email, password, mode }),
           })
             .then((res) => {
+              if (res.status === 409) throw new Error("That email is already registered.");
               if (!res.ok) throw new Error("Wrong email or password.");
-              router.push("/");
+              router.push(next);
               router.refresh();
             })
             .catch((err: Error) => setError(err.message))
@@ -47,19 +50,40 @@ export default function LoginPage() {
           <input
             type="password"
             required
+            minLength={12}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="Password"
+            placeholder={mode === "signup" ? "Password (12+ characters)" : "Password"}
             aria-label="Password"
           />
         </p>
         {error && <p className="rate">{error}</p>}
         <p style={{ marginTop: "1rem" }}>
           <button className="primary" type="submit" disabled={busy}>
-            {busy ? "Signing in…" : "Sign in"}
+            {busy ? "…" : mode === "login" ? "Sign in" : "Create account"}
           </button>
         </p>
       </form>
+      <p className="rate">
+        {mode === "login" ? "New here? " : "Already have an account? "}
+        <button
+          className="chip"
+          onClick={() => {
+            setMode(mode === "login" ? "signup" : "login");
+            setError(null);
+          }}
+        >
+          {mode === "login" ? "Create an account" : "Sign in instead"}
+        </button>
+      </p>
     </main>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
   );
 }

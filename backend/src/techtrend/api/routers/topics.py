@@ -8,7 +8,7 @@ from fastapi import APIRouter, status
 from sqlalchemy import delete, select, text
 
 from techtrend.api.deps import SessionDep, UserDep
-from techtrend.api.schemas import TopicDraftIn, TopicDraftOut, TopicIn, TopicOut
+from techtrend.api.schemas import CardOut, TopicDraftIn, TopicDraftOut, TopicIn, TopicOut
 from techtrend.personal.models import Subscription
 from techtrend.topic.distill import distill
 from techtrend.topic.fingerprint import fingerprint, normalise_term
@@ -26,7 +26,7 @@ async def draft(body: TopicDraftIn, user: UserDep, db: SessionDep) -> TopicDraft
     be worthless.
     """
     d = await distill(body.sentence)
-    stats = await _dry_run(db, d.must, d.exclude)
+    count, preview = await _dry_run(db, d.must, d.should, d.exclude, d.entities)
     return TopicDraftOut(
         title=d.title,
         must=d.must,
@@ -35,36 +35,66 @@ async def draft(body: TopicDraftIn, user: UserDep, db: SessionDep) -> TopicDraft
         exclude=d.exclude,
         ambiguity=d.ambiguity,
         options=d.options,
-        count_7d=stats["count_7d"],
-        per_day=stats["per_day"],
-        preview=[],
+        count_7d=count,
+        per_day=round(count / 7.0, 1),
+        preview=preview,
     )
 
 
-async def _dry_run(db: SessionDep, must: list[str], exclude: list[str]) -> dict[str, float]:
-    """How many stories would this topic have matched in the last 7 days?"""
-    since = datetime.now(UTC) - timedelta(days=7)
+async def _dry_run(
+    db: SessionDep,
+    must: list[str],
+    should: list[str],
+    exclude: list[str],
+    entities: list[str],
+) -> tuple[int, list[CardOut]]:
+    """Run the draft against the last 7 days with the SAME evaluate() the
+    pipeline uses. If the preview used a different code path it would be a
+    lie, and 'shows what we understood' would be worthless."""
+    from techtrend.topic.match import StoryText, evaluate, searchable
+
     if not must:
-        return {"count_7d": 0, "per_day": 0.0}
-    # An empty exclude array is correct as-is: `x ILIKE ANY('{}')` is false, so
-    # `NOT (...)` is true. No sentinel value needed -- and a NUL sentinel would
-    # be rejected by Postgres as invalid UTF-8 anyway.
-    row = await db.execute(
+        return 0, []
+    since = datetime.now(UTC) - timedelta(days=7)
+    rows = await db.execute(
         text("""
-            SELECT count(*) FROM stories st
-             JOIN articles a ON a.id = st.display_article_id
-            WHERE st.created_at >= :since
-              AND a.title ILIKE ANY(CAST(:must AS text[]))
-              AND NOT (a.title ILIKE ANY(CAST(:excl AS text[])))
+            SELECT st.id, a.title, a.description, a.entities, st.importance,
+                   a.published_at, a.image_url, a.url, si.name, st.source_count
+              FROM stories st
+              JOIN articles a ON a.id = st.display_article_id
+              JOIN sites si ON si.id = a.site_id
+             WHERE a.published_at >= :since AND si.opt_out_at IS NULL
         """),
-        {
-            "since": since,
-            "must": [f"%{m}%" for m in must],
-            "excl": [f"%{e}%" for e in exclude],
-        },
+        {"since": since},
     )
-    n = int(row.scalar() or 0)
-    return {"count_7d": n, "per_day": round(n / 7.0, 1)}
+    hits = []
+    for r in rows:
+        st = searchable(r[1], r[2], list(r[3] or []))
+        score, _ = evaluate(
+            must=must,
+            should=should,
+            exclude=exclude,
+            entities=entities,
+            topic_embedding=None,
+            story=StoryText(text=st.text, embedding=None),
+        )
+        if score >= 0.35:
+            hits.append((score * (r[4] or 0.5), r))
+    hits.sort(key=lambda h: h[0], reverse=True)
+    preview = [
+        CardOut(
+            story_id=r[0],
+            headline=r[1],
+            description=r[2],
+            source_name=r[8],
+            source_count=r[9],
+            published_at=r[5],
+            image_url=r[6],
+            url=r[7],
+        )
+        for _, r in hits[:3]
+    ]
+    return len(hits), preview
 
 
 @router.post("/topics", response_model=TopicOut, status_code=status.HTTP_201_CREATED)
@@ -108,6 +138,13 @@ async def create_topic(body: TopicIn, user: UserDep, db: SessionDep) -> TopicOut
     if already is None:
         db.add(Subscription(user_id=user.id, topic_id=topic.id, label=body.title))
         topic.subscriber_count += 1
+    # Retro-match the recent corpus so the new topic's feed starts full --
+    # committed with the subscription, worked by the match stage.
+    from techtrend.platform import queue
+
+    await queue.enqueue(
+        "match", f"match:topic:{topic.id}", {"topic_id": topic.id}, session=db
+    )
     await db.commit()
     await db.refresh(topic)
     return _out(topic)

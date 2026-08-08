@@ -8,15 +8,21 @@ const API_URL = process.env.API_URL ?? "http://localhost:8000";
 /** Exchange credentials for a token, held in an httpOnly cookie -- the
  *  browser never sees it, so an XSS bug can't exfiltrate it. */
 export async function POST(req: Request) {
-  const { email, password } = (await req.json()) as { email: string; password: string };
-  const res = await fetch(`${API_URL}/v1/auth/login`, {
+  const { email, password, mode } = (await req.json()) as {
+    email: string;
+    password: string;
+    mode?: "login" | "signup";
+  };
+  const endpoint = mode === "signup" ? "signup" : "login";
+  const res = await fetch(`${API_URL}/v1/auth/${endpoint}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
     cache: "no-store",
   });
   if (!res.ok) {
-    return NextResponse.json({ error: "invalid credentials" }, { status: 401 });
+    const status = res.status === 409 ? 409 : 401;
+    return NextResponse.json({ error: "auth failed" }, { status });
   }
   const { access_token, expires_in } = (await res.json()) as {
     access_token: string;

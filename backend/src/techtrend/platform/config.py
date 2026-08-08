@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     # env. Loading it here too makes `.env` sufficient in local dev.
     anthropic_api_key: SecretStr | None = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
     ai_model: str = "claude-opus-5"
+    # Distill is expansion, not judgment, and the user is WAITING (~2s budget).
+    # Haiku is fast and cheap and good at it; judging quality stays on ai_model.
+    ai_distill_model: str = "claude-haiku-4-5"
     ai_judge_effort: Effort = "medium"
     ai_distill_effort: Effort = "low"
     ai_batch_enabled: bool = True

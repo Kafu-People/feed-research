@@ -44,11 +44,13 @@ class ClaudeClient:
         )
 
     async def judge(self, title: str, body: str, **kw: object) -> JudgeResult:
+        s = settings()
         resp = await self._c.messages.parse(
-            model=MODEL,
+            model=s.ai_model,
             # Headroom for THINKING, not for output: thinking is on by default
             # on claude-opus-5 and max_tokens caps thinking + response text.
             max_tokens=16000,
+            output_config={"effort": s.ai_judge_effort},
             system=[
                 {
                     "type": "text",
@@ -64,13 +66,14 @@ class ClaudeClient:
         if resp.stop_reason == "refusal":
             cat = getattr(resp.stop_details, "category", None) if resp.stop_details else None
             raise Refused(cat)
-        _observe("judge", resp.usage)
+        _observe("judge", resp.usage, model=s.ai_model)
         return cast("JudgeResult", resp.parsed_output)
 
     async def distill(self, sentence: str) -> TopicDraft:
+        s = settings()
         resp = await self._c.messages.parse(
-            model=MODEL,
-            max_tokens=16000,
+            model=s.ai_distill_model,
+            max_tokens=8000,
             system=[
                 {
                     "type": "text",
@@ -83,7 +86,7 @@ class ClaudeClient:
         )
         if resp.stop_reason == "refusal":
             raise Refused(None)
-        _observe("distill", resp.usage)
+        _observe("distill", resp.usage, model=s.ai_distill_model)
         return cast("TopicDraft", resp.parsed_output)
 
 
@@ -95,7 +98,7 @@ def _render_judge(title: str, body: str, kw: dict[str, object]) -> str:
     )
 
 
-def _observe(stage: str, usage: object) -> None:
+def _observe(stage: str, usage: object, *, model: str = MODEL) -> None:
     for field in (
         "input_tokens",
         "output_tokens",
@@ -109,7 +112,7 @@ def _observe(stage: str, usage: object) -> None:
     log.info(
         "ai.call",
         stage=stage,
-        model=MODEL,
+        model=model,
         effort=settings().ai_judge_effort,
         cache_read=getattr(usage, "cache_read_input_tokens", 0),
     )

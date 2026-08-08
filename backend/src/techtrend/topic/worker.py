@@ -70,7 +70,18 @@ def _parse_vec(raw: str | None) -> list[float] | None:
     return [float(x) for x in raw.strip("[]").split(",")]
 
 
+_RECENT_STORIES = text("""
+    SELECT st.id, a.title, a.description, a.entities,
+           CAST(st.embedding AS text) AS embedding
+      FROM stories st JOIN articles a ON a.id = st.display_article_id
+     WHERE a.published_at > now() - make_interval(days => 30)
+""")
+
+
 async def run(job: queue.Job) -> None:
+    if "topic_id" in job.payload:
+        await _backfill_topic(job.payload["topic_id"])
+        return
     story_id = job.payload["story_id"]
     async with session_scope() as s:
         row = (await s.execute(_LOAD_STORY, {"id": story_id})).one_or_none()
@@ -121,3 +132,37 @@ async def run(job: queue.Job) -> None:
     telemetry.log.info(
         "match.done", story_id=story_id, candidates=len(candidate_ids), matched=len(rows)
     )
+
+
+async def _backfill_topic(topic_id: int) -> None:
+    """A NEW topic retro-matches the recent corpus, so its feed starts full.
+
+    Without this, saving a topic shows an empty dashboard until tomorrow --
+    the one first impression the product cannot afford.
+    """
+    async with session_scope() as s:
+        t = (await s.execute(_LOAD_TOPICS, {"ids": [topic_id]})).one_or_none()
+        if t is None:
+            return
+        stories = (await s.execute(_RECENT_STORIES)).all()
+
+    rows = []
+    topic_vec = _parse_vec(t.embedding)
+    for r in stories:
+        st = searchable(r.title, r.description, list(r.entities or []))
+        score, matched_by = evaluate(
+            must=list(t.must or []),
+            should=list(t.should or []),
+            exclude=list(t.exclude or []),
+            entities=list(t.entities or []),
+            topic_embedding=topic_vec,
+            story=StoryText(text=st.text, embedding=_parse_vec(r.embedding)),
+        )
+        if score >= t.floor:
+            rows.append({"topic_id": topic_id, "story_id": r.id,
+                         "score": score, "matched_by": matched_by})
+    if rows:
+        async with session_scope() as s:
+            for r in rows:
+                await s.execute(_UPSERT, r)
+    telemetry.log.info("match.topic_backfill", topic_id=topic_id, matched=len(rows))
