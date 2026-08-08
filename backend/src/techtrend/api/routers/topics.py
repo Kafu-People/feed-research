@@ -8,7 +8,14 @@ from fastapi import APIRouter, status
 from sqlalchemy import delete, select, text
 
 from techtrend.api.deps import SessionDep, UserDep
-from techtrend.api.schemas import CardOut, TopicDraftIn, TopicDraftOut, TopicIn, TopicOut
+from techtrend.api.schemas import (
+    CardOut,
+    TopicDraftIn,
+    TopicDraftOut,
+    TopicIn,
+    TopicLabel,
+    TopicOut,
+)
 from techtrend.personal.models import Subscription
 from techtrend.topic.distill import distill
 from techtrend.topic.fingerprint import fingerprint, normalise_term
@@ -146,6 +153,61 @@ async def create_topic(body: TopicIn, user: UserDep, db: SessionDep) -> TopicOut
     await db.commit()
     await db.refresh(topic)
     return _out(topic)
+
+
+@router.get("/topics/{topic_id}/stories", response_model=list[CardOut])
+async def topic_stories(
+    topic_id: int, user: UserDep, db: SessionDep, limit: int = 30
+) -> list[CardOut]:
+    """One topic's recent feed -- the review instrument: would you subscribe?
+
+    Subscription-gated: a topic's matches are shared, but the feed view is
+    for topics the user follows.
+    """
+    sub = await db.scalar(
+        select(Subscription).where(
+            Subscription.user_id == user.id, Subscription.topic_id == topic_id
+        )
+    )
+    if sub is None:
+        from fastapi import HTTPException
+
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="not subscribed to this topic")
+    rows = await db.execute(
+        text("""
+            SELECT st.id, a.title, st.summary, a.description, si.name, st.source_count,
+                   a.published_at, a.image_url, a.url, m.matched_by,
+                   COALESCE(:label, t.title) AS label
+              FROM matches m
+              JOIN topics t ON t.id = m.topic_id
+              JOIN stories st ON st.id = m.story_id
+              JOIN articles a ON a.id = st.display_article_id
+              JOIN sites si ON si.id = a.site_id
+             WHERE m.topic_id = :tid
+               AND si.opt_out_at IS NULL
+               AND a.published_at > now() - interval '7 days'
+             ORDER BY m.match_score * COALESCE(st.importance, 0.4) DESC,
+                      a.published_at DESC
+             LIMIT :limit
+        """),
+        {"tid": topic_id, "label": sub.label, "limit": min(limit, 100)},
+    )
+    return [
+        CardOut(
+            story_id=r[0],
+            headline=r[1],
+            summary=r[2],
+            description=r[3],
+            source_name=r[4],
+            source_count=r[5],
+            published_at=r[6],
+            image_url=r[7],
+            url=r[8],
+            matched_by=list(r[9] or []),
+            topic_labels=[TopicLabel(topic_id=topic_id, label=r[10])],
+        )
+        for r in rows
+    ]
 
 
 @router.get("/topics", response_model=list[TopicOut])

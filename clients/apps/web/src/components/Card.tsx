@@ -33,10 +33,10 @@ export function CardItem({ card, position }: { card: Card; position: number }) {
 
         <p className="meta">
           {sourceLine(card.sourceName, card.sourceCount, card.publishedAt)}
-          {m.labels.map((label) => (
-            <span className="label" key={label}>
-              {label}
-            </span>
+          {card.topicLabels.map((t) => (
+            <a className="label" key={t.label} href={`/topics/${t.topic_id}`}>
+              {t.label}
+            </a>
           ))}
         </p>
 

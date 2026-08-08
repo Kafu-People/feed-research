@@ -131,6 +131,11 @@ export function createClient(opts: ClientOptions) {
       return call<{ id: number; title: string; must: string[] }[]>("/v1/topics");
     },
 
+    async topicStories(topicId: number): Promise<Card[]> {
+      const raw = await call<RawCard[]>(`/v1/topics/${topicId}/stories`);
+      return raw.map(toCard);
+    },
+
     async postEvents(batch: EventDraft[]): Promise<void> {
       await call<{ accepted: number }>("/v1/events", {
         method: "POST",

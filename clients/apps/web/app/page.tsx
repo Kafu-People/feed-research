@@ -38,6 +38,9 @@ export default async function DashboardPage() {
   // component below takes over feedback capture and keyboard shortcuts.
   return (
     <main>
+      <p className="rate">
+        <Link href="/topics">Topics</Link> · <Link href="/onboarding">Follow something new</Link>
+      </p>
       <h1>Today</h1>
       <DashboardClient initial={data}>
         <ol className="cards">
