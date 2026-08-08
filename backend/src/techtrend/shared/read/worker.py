@@ -24,14 +24,15 @@ from techtrend.shared.read.extract import Extraction, extract, parse_date
 
 _UPSERT = text("""
     INSERT INTO articles (url, url_hash, site_id, title, published_at, author,
-                          image_url, language, text_key, html_key, extraction,
-                          entities, embedding)
+                          image_url, language, description, text_key, html_key,
+                          extraction, entities, embedding)
     VALUES (:url, :url_hash, :site_id, :title, :published_at, :author,
-            :image_url, :language, :text_key, :html_key, CAST(:extraction AS jsonb),
-            :entities, CAST(:embedding AS vector))
+            :image_url, :language, :description, :text_key, :html_key,
+            CAST(:extraction AS jsonb), :entities, CAST(:embedding AS vector))
     ON CONFLICT (url_hash) DO UPDATE
        SET title = EXCLUDED.title,
            author = EXCLUDED.author,
+           description = COALESCE(EXCLUDED.description, articles.description),
            image_url = EXCLUDED.image_url,
            language = EXCLUDED.language,
            text_key = COALESCE(EXCLUDED.text_key, articles.text_key),
@@ -109,6 +110,7 @@ async def run(job: queue.Job) -> None:
             "author": meta.author if meta else None,
             "image_url": meta.image if meta else None,
             "language": (meta.language if meta else None) or "en",
+            "description": meta.description if meta else None,
             "text_key": text_key,
             "html_key": html_key,
             "extraction": _extraction_json(ext, resp.status if resp else None),

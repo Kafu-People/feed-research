@@ -127,6 +127,9 @@ class Article(Base):
     author: Mapped[str | None] = mapped_column(Text)
     image_url: Mapped[str | None] = mapped_column(Text)
     language: Mapped[str] = mapped_column(Text, nullable=False, server_default="en")
+    # The publisher's own preview snippet (og:description / JSON-LD) -- theirs,
+    # attributed, written for link previews. NOT the body (invariant #1).
+    description: Mapped[str | None] = mapped_column(Text)
     entities: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, server_default="{}")
     extraction: Mapped[dict[str, object]] = mapped_column(
         JSONB, nullable=False, server_default="{}"

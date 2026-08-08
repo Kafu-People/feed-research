@@ -69,3 +69,37 @@ def test_real_body_is_extracted() -> None:
     assert body is not None
     assert "word3" in body.text
     assert 0 < body.confidence <= 1.0
+
+
+def test_og_description_both_attribute_orders() -> None:
+    from techtrend.shared.read.extract import extract_description
+
+    a = '<meta property="og:description" content="Snippet A here" />'
+    b = '<meta content="Snippet B here" property="og:description" />'
+    c = '<meta name="description" content="Plain meta &amp; entities" />'
+    assert extract_description(a) == "Snippet A here"
+    assert extract_description(b) == "Snippet B here"
+    assert extract_description(c) == "Plain meta & entities"
+    assert extract_description("<html><body>nothing</body></html>") is None
+
+
+def test_jsonld_description_wins_over_meta() -> None:
+    html = (
+        '<script type="application/ld+json">'
+        '{"@type":"NewsArticle","headline":"H","description":"From JSON-LD"}'
+        "</script>"
+        '<meta property="og:description" content="From og tag" />'
+    )
+    assert extract_jsonld(html).description == "From JSON-LD"
+
+
+def test_description_regex_is_linear_on_hostile_html() -> None:
+    """The naive .*? DOTALL version hung on real pages; this must stay fast."""
+    import time
+
+    from techtrend.shared.read.extract import extract_description
+
+    hostile = "<meta " + "x" * 50 + ">" * 5 + '<meta content="no closing quote' * 2000
+    t0 = time.monotonic()
+    extract_description(hostile)
+    assert time.monotonic() - t0 < 1.0

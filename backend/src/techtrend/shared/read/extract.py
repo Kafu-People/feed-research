@@ -39,6 +39,9 @@ class Meta:
     author: str | None = None
     image: str | None = None
     language: str | None = None
+    # The publisher's own preview snippet (JSON-LD description / og:description)
+    # -- written by them for exactly this use: link previews with attribution.
+    description: str | None = None
     source: str = "none"  # jsonld | none
 
 
@@ -108,6 +111,47 @@ def _candidates(doc: object) -> list[dict[str, object]]:
     return [doc] if names & _ARTICLE_TYPES else []
 
 
+# og:description / meta description. Two passes -- find whole <meta> tags,
+# then parse attributes inside each -- so matching stays LINEAR. A one-shot
+# alternation over attribute orders backtracks catastrophically on hostile
+# or merely messy real-world HTML (it hung the first backfill).
+_META_TAG = re.compile(r"<meta\b[^>]{0,2000}?>", re.IGNORECASE)
+_ATTR_DESC = re.compile(
+    r'(?:property|name)\s*=\s*["\'](?:og:description|description)["\']', re.IGNORECASE
+)
+_ATTR_CONTENT = re.compile(r'content\s*=\s*["\']([^"\']{0,2000})', re.IGNORECASE)
+_HEAD_LIMIT = 100_000  # descriptions live in <head>; never scan megabytes
+_MAX_DESC = 500
+
+
+def _clean_description(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    import html as html_mod
+
+    text = html_mod.unescape(value).strip()
+    if not text:
+        return None
+    return text[:_MAX_DESC]
+
+
+def extract_description(html: str) -> str | None:
+    """og:description first (written for link previews), then meta description."""
+    fallback = None
+    for m in _META_TAG.finditer(html[:_HEAD_LIMIT]):
+        tag = m.group(0)
+        if not _ATTR_DESC.search(tag):
+            continue
+        content = _ATTR_CONTENT.search(tag)
+        desc = _clean_description(content.group(1)) if content else None
+        if not desc:
+            continue
+        if "og:description" in tag.lower():
+            return desc
+        fallback = fallback or desc
+    return fallback
+
+
 def extract_jsonld(html: str) -> Meta:
     for m in _LDJSON.finditer(html):
         try:
@@ -123,9 +167,11 @@ def extract_jsonld(html: str) -> Meta:
                 author=_name(art.get("author")),
                 image=_image(art.get("image")),
                 language=lang_s[:2].lower() if isinstance(lang_s, str) and lang_s else None,
+                description=_clean_description(_first(art.get("description")))
+                or extract_description(html),
                 source="jsonld",
             )
-    return Meta()
+    return Meta(description=extract_description(html))
 
 
 def extract_body(html: str, url: str | None = None) -> Body | None:

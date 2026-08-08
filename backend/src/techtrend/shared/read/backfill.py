@@ -59,3 +59,40 @@ def _body(text_key: str | None) -> str | None:
         return blobs.get(text_key).decode("utf-8", errors="replace")
     except Exception:
         return None  # a missing blob degrades to title-only, same as paywalled
+
+
+_DESC_PENDING = text("""
+    SELECT id, html_key FROM articles
+     WHERE description IS NULL AND html_key IS NOT NULL
+     ORDER BY id
+     LIMIT :batch
+""")
+
+_DESC_SET = text("UPDATE articles SET description = :d WHERE id = :id")
+_DESC_SKIP = text("UPDATE articles SET description = '' WHERE id = :id")
+
+
+async def backfill_descriptions(batch: int = 200) -> int:
+    """Re-extract publisher descriptions from stored raw HTML.
+
+    This re-run is what keeping raw HTML in S3 is FOR -- no re-crawl.
+    Articles whose HTML has no description get '' so the query converges.
+    """
+    from techtrend.shared.read.extract import extract_description
+
+    done = 0
+    while True:
+        async with session_scope() as s:
+            rows = (await s.execute(_DESC_PENDING, {"batch": batch})).all()
+        if not rows:
+            return done
+        htmls = await asyncio.gather(*(asyncio.to_thread(_body, r.html_key) for r in rows))
+        async with session_scope() as s:
+            for r, html in zip(rows, htmls, strict=True):
+                desc = extract_description(html) if html else None
+                if desc:
+                    await s.execute(_DESC_SET, {"id": r.id, "d": desc})
+                else:
+                    await s.execute(_DESC_SKIP, {"id": r.id})
+        done += len(rows)
+        telemetry.log.info("backfill.descriptions", done=done)

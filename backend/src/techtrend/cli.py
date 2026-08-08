@@ -116,25 +116,40 @@ def print_top_stories_cmd(limit: int = 15) -> None:
             rows = await s.execute(
                 sql("""
                     SELECT st.importance, st.novelty_score, st.story_type,
-                           st.source_count, a.title, st.summary
-                      FROM stories st JOIN articles a ON a.id = st.display_article_id
-                     WHERE st.judged_at IS NOT NULL
-                       AND st.created_at > now() - interval '48 hours'
-                     ORDER BY st.importance DESC NULLS LAST
+                           st.source_count, a.title, st.summary,
+                           a.description, s2.name AS site_name
+                      FROM stories st
+                      JOIN articles a ON a.id = st.display_article_id
+                      JOIN sites s2 ON s2.id = a.site_id
+                     WHERE a.published_at > now() - interval '48 hours'
+                     ORDER BY st.importance DESC NULLS LAST, st.source_count DESC
                      LIMIT :n
                 """),
                 {"n": limit},
             )
             for r in rows:
                 nov = f"{r.novelty_score:.2f}" if r.novelty_score is not None else "--"
+                imp = f"{r.importance:.2f}" if r.importance is not None else "--"
                 typer.echo(
-                    f"[{r.importance:.2f}] nov={nov} {r.story_type or 'unjudged':<22}"
+                    f"[{imp}] nov={nov} {(r.story_type or 'unjudged'):<20}"
                     f" {r.source_count:>2}src  {r.title[:70]}"
                 )
-                if r.summary:
-                    typer.echo(f"       {r.summary[:150]}")
+                # Our summary when judged; else the publisher's own snippet, quoted.
+                blurb = r.summary or (f'"{r.description}" — {r.site_name}' if r.description else "")
+                if blurb:
+                    typer.echo(f"       {blurb[:170]}")
 
     asyncio.run(_go())
+
+
+@app.command("backfill-descriptions")
+def backfill_descriptions_cmd(batch: int = 200) -> None:
+    """Re-extract publisher preview snippets from the stored raw HTML."""
+    bootstrap()
+    from techtrend.shared.read.backfill import backfill_descriptions
+
+    n = asyncio.run(backfill_descriptions(batch))
+    typer.echo(f"processed {n} articles")
 
 
 @app.command("backfill-embeddings")
