@@ -17,6 +17,7 @@ export default async function DashboardPage() {
         <h1>TechTrend</h1>
         <p>Describe what you want to follow, and see it immediately.</p>
         <p><Link href="/onboarding">Get started →</Link></p>
+        <p><Link href="/login">Sign in →</Link></p>
       </main>
     );
   }
