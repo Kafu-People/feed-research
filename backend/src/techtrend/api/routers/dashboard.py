@@ -1,22 +1,27 @@
-"""The one screen: cards from all topics, mixed, best first, each labelled."""
+"""The one screen: cards from all topics, mixed, best first, each labelled.
+
+Public-board mode: one shared board for everyone. No seen-tracking, no learned
+weights, no exploration slot -- ranking is importance x match x freshness only,
+identical for every visitor. The personal layer's code stays; this route just
+stops calling it "for now".
+"""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 
 from fastapi import APIRouter
-from sqlalchemy import select, text
+from sqlalchemy import text
 
 from techtrend.api.deps import SessionDep, UserDep
 from techtrend.api.schemas import CardOut, DashboardOut, TopicLabel
-from techtrend.personal.models import Seen, Weight
-from techtrend.personal.rank import Candidate, Weights, rank, select_dashboard
+from techtrend.personal.rank import Candidate, Weights, rank
 from techtrend.platform.config import settings
 
 router = APIRouter(tags=["dashboard"])
 
-# Candidates = matches for the user's subscribed topics, minus what they've seen,
-# minus opted-out publishers (invariant #3 gates serving, not just collection).
+# Candidates = matches for the board's topics, minus opted-out publishers
+# (invariant #3 gates serving, not just collection).
 _CANDIDATES = text("""
     SELECT st.id, a.title, st.summary, si.name, si.id, st.source_count,
            a.published_at, a.image_url, a.url, st.importance,
@@ -30,23 +35,9 @@ _CANDIDATES = text("""
       JOIN sites   si ON si.id = a.site_id
      WHERE si.opt_out_at IS NULL
        AND st.importance IS NOT NULL
-       AND NOT EXISTS (
-             SELECT 1 FROM seen s
-              WHERE s.user_id = :uid AND s.story_id = st.id
-           )
      ORDER BY st.importance DESC
      LIMIT 400
 """)
-
-
-async def _load_weights(db: SessionDep, user_id: int) -> Weights:
-    rows = await db.execute(select(Weight).where(Weight.user_id == user_id))
-    w = Weights()
-    for row in rows.scalars():
-        {"type": w.by_type, "source": w.by_source, "keyword": w.by_keyword}[row.kind][row.key] = (
-            row.value
-        )
-    return w
 
 
 def _to_card(c: Candidate) -> CardOut:
@@ -96,20 +87,13 @@ async def dashboard(user: UserDep, db: SessionDep) -> DashboardOut:
         if not any(term_hits(term, searchable(r[1], r[15], []).text) for term in (r[16] or []))
     ]
 
-    weights = await _load_weights(db, user.id)
-    ranked = rank(candidates, weights, now=datetime.now(UTC))
+    # Empty Weights = editorial type defaults only, the same for everyone.
+    ranked = rank(candidates, Weights(), now=datetime.now(UTC))
 
-    s = settings()
-    picked = select_dashboard(ranked, s.dashboard_max_cards, s.exploration_slots)
-    picked_ids = {c.story_id for c in picked}
-    cards = [_to_card(c) for c in picked]
-    more = [_to_card(c) for c in ranked if c.story_id not in picked_ids][:10]
-
-    # Record position so bias can be corrected later.
-    for i, c in enumerate(cards):
-        await db.merge(Seen(user_id=user.id, story_id=c.story_id, state="shown", position=i))
-    await db.commit()
+    limit = settings().dashboard_max_cards
+    cards = [_to_card(c) for c in ranked[:limit]]
+    more = [_to_card(c) for c in ranked[limit:]][:10]
 
     # NOTE: no backfill. If there are seven good things, seven is what ships
-    # (invariant #10). That is also what keeps every skip a clean negative.
+    # (invariant #10).
     return DashboardOut(cards=cards, generated_at=datetime.now(UTC), done=True, more=more)

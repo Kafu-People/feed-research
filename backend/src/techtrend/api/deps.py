@@ -74,16 +74,23 @@ def _unauthorized(msg: str = "invalid credentials") -> HTTPException:
     )
 
 
+# Public-board mode: accounts are switched off "for now". Every request acts
+# as the one shared board user, so the dashboard, topics, and feeds are the
+# same for everyone. The token machinery above stays for the day accounts
+# return; nothing below reads the Authorization header.
+PUBLIC_EMAIL = "board@techtrend.local"
+
+
 async def current_user(
     db: SessionDep,
     authorization: Annotated[str | None, Header()] = None,
 ) -> User:
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise _unauthorized("missing bearer token")
-    user_id = verify_token(authorization.split(" ", 1)[1])
-    user = await db.scalar(select(User).where(User.id == user_id))
+    user = await db.scalar(select(User).order_by(User.id).limit(1))
     if user is None:
-        raise _unauthorized("unknown user")
+        # Not a credential: an unloginable sentinel (no auth route exists).
+        user = User(email=PUBLIC_EMAIL, password_hash="!public-board-no-login")  # noqa: S106
+        db.add(user)
+        await db.commit()
     return user
 
 

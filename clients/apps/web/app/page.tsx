@@ -2,29 +2,17 @@ import { CardItem } from "@/components/Card";
 import { DayEnd } from "@/components/DayEnd";
 import { DashboardClient } from "@/components/DashboardClient";
 import { api } from "@/lib/api";
-import { sessionToken } from "@/lib/session";
 import { COPY } from "@techtrend/core";
 import Link from "next/link";
 
-// One user's screen: never statically cached, never shared at the edge.
+// The board changes as stories arrive: never statically cached.
 export const dynamic = "force-dynamic";
 
+/** The global public board: one shared feed, the same for every visitor. */
 export default async function DashboardPage() {
-  const token = await sessionToken();
-  if (!token) {
-    return (
-      <main>
-        <h1>TechTrend</h1>
-        <p>Describe what you want to follow, and see it immediately.</p>
-        <p><Link href="/onboarding">Get started →</Link></p>
-        <p><Link href="/login">Sign in →</Link></p>
-      </main>
-    );
-  }
-
   let data;
   try {
-    data = await api(token).dashboard();
+    data = await api().dashboard();
   } catch {
     return (
       <main>
@@ -34,15 +22,13 @@ export default async function DashboardPage() {
     );
   }
 
-  // Server-rendered so the first card is HTML, not a fetch. The client
-  // component below takes over feedback capture and keyboard shortcuts.
   return (
     <main>
       <p className="rate">
         <Link href="/topics">Topics</Link> · <Link href="/onboarding">Follow something new</Link>
       </p>
       <h1>Today</h1>
-      <DashboardClient initial={data}>
+      <DashboardClient>
         <ol className="cards">
           {data.cards.map((c, i) => (
             <CardItem key={c.storyId} card={c} position={i} />

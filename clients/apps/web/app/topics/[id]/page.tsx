@@ -1,26 +1,22 @@
 import Link from "next/link";
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 
 import { CardItem } from "@/components/Card";
 import { api } from "@/lib/api";
-import { sessionToken } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
-/** One topic's feed — the review instrument: would you subscribe to this? */
+/** One topic's feed — public, same for everyone. */
 export default async function TopicFeedPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const token = await sessionToken();
-  if (!token) redirect(`/login?next=/topics/${id}`);
 
-  const client = api(token);
   let cards;
   try {
-    cards = await client.topicStories(Number(id));
+    cards = await api().topicStories(Number(id));
   } catch {
     notFound();
   }

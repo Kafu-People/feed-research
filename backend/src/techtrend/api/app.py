@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from techtrend import __version__
-from techtrend.api.routers import auth, dashboard, events, health, suggestions, topics
+from techtrend.api.routers import dashboard, events, health, suggestions, topics
 from techtrend.platform import cache, db, telemetry
 from techtrend.platform.config import check_production_invariants, settings
 
@@ -51,8 +51,8 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    # Public-board mode: no auth router. Everyone shares one board (deps.py).
     app.include_router(health.router)
-    app.include_router(auth.router, prefix="/v1")
     app.include_router(topics.router, prefix="/v1")
     app.include_router(dashboard.router, prefix="/v1")
     app.include_router(events.router, prefix="/v1")

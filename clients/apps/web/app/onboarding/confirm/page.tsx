@@ -1,6 +1,6 @@
 "use client";
 
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 
 import { COPY, rateLabel, type Card, type TopicDraft } from "@techtrend/core";
@@ -70,7 +70,6 @@ function Confirm() {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const router = useRouter();
-  const pathname = usePathname();
 
   useEffect(() => {
     if (!sentence) return;
@@ -80,17 +79,12 @@ function Confirm() {
       body: JSON.stringify({ sentence }),
     })
       .then((res) => {
-        if (res.status === 401) {
-          // Reading the sentence needs an account; come straight back after.
-          router.push(`/login?next=${encodeURIComponent(`${pathname}?s=${sentence}`)}`);
-          return null;
-        }
         if (!res.ok) throw new Error("Could not read that. Try rephrasing?");
         return res.json() as Promise<RawDraft>;
       })
       .then((raw) => raw && setDraft(toDraft(raw)))
       .catch((e: Error) => setError(e.message));
-  }, [sentence, router, pathname]);
+  }, [sentence]);
 
   if (error) return <main><h1>Hmm</h1><p className="rate">{error}</p></main>;
   if (!draft) return <main><h1>Reading that…</h1></main>;
