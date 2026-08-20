@@ -158,18 +158,21 @@ async def test_missing_token_is_fatal(monkeypatch: pytest.MonkeyPatch) -> None:
 # --------------------------------------------------------- mrkdwn normalising
 
 
-def test_markdown_bold_becomes_slack_bold() -> None:
-    """Slack bolds on ONE asterisk; `**x**` leaves the spare pair visible."""
-    assert to_mrkdwn("OpenAI will **go public** soon.") == "OpenAI will *go public* soon."
+def test_markdown_bold_folds_to_a_code_span() -> None:
+    """Highlighting is a backticked span; emphasis in any dialect becomes one."""
+    assert to_mrkdwn("OpenAI will **go public** soon.") == "OpenAI will `go public` soon."
 
 
-def test_correct_slack_bold_is_left_alone() -> None:
-    assert to_mrkdwn("already *correct* here") == "already *correct* here"
+def test_slack_bold_folds_to_a_code_span() -> None:
+    assert to_mrkdwn("OpenAI will *go public* soon.") == "OpenAI will `go public` soon."
 
 
-def test_multiple_bold_spans_all_convert() -> None:
-    out = to_mrkdwn("**Anthropic** raised **$2bn** today")
-    assert out == "*Anthropic* raised *$2bn* today"
+def test_existing_code_spans_are_left_alone() -> None:
+    assert to_mrkdwn("already `correct` here") == "already `correct` here"
+
+
+def test_multiple_spans_all_convert() -> None:
+    assert to_mrkdwn("**Anthropic** raised **$2bn**") == "`Anthropic` raised `$2bn`"
 
 
 def test_headings_and_bullets_are_stripped() -> None:
@@ -177,10 +180,18 @@ def test_headings_and_bullets_are_stripped() -> None:
     assert to_mrkdwn("- a bullet") == "a bullet"
 
 
-def test_underscore_bold_becomes_italic() -> None:
-    assert to_mrkdwn("a __span__ here") == "a _span_ here"
+def test_underscores_fold_to_a_code_span() -> None:
+    assert to_mrkdwn("a __span__ here") == "a `span` here"
 
 
 def test_lone_asterisks_are_not_mangled() -> None:
-    """A stray asterisk (a footnote marker, a glob) must survive untouched."""
+    """A footnote marker or a *.py glob must survive, not become markup.
+
+    This is what the \\S lookarounds in the emphasis patterns are protecting.
+    """
     assert to_mrkdwn("the file *.py and a * alone") == "the file *.py and a * alone"
+
+
+def test_a_bullet_line_is_not_read_as_emphasis() -> None:
+    """`* item` opens with an asterisk but is a list marker, not a bold span."""
+    assert to_mrkdwn("* first item") == "first item"

@@ -88,22 +88,29 @@ class SlackClient:
         return str(data["ts"])
 
 
-# Markdown and Slack's mrkdwn disagree on exactly the characters a model reaches
-# for. `**bold**` is Markdown; Slack bolds on a SINGLE asterisk and renders the
-# spare pair as literal characters. The prompt asks for Slack's dialect; this is
-# the guard for when a model answers in Markdown anyway.
+# Highlighting is a backticked span: Slack renders it in a tinted box, which
+# catches the eye in a way bold does not. The prompt asks for backticks; these
+# fold either bold dialect into one if a model reaches for emphasis instead.
+# `**md**` is Markdown's bold, `*slack*` is Slack's -- both mean "emphasis", and
+# here emphasis means code.
+#
+# The \S lookarounds are load-bearing: they require non-space just inside each
+# delimiter, so a lone asterisk in ordinary prose (a footnote marker, a `*.py`
+# glob) is never swallowed into markup.
 _MD_BOLD = re.compile(r"\*\*+(?=\S)(.+?)(?<=\S)\*\*+", re.S)
+_SLACK_BOLD = re.compile(r"(?<!\*)\*(?=\S)([^*\n]+?)(?<=\S)\*(?!\*)")
 _MD_UNDER = re.compile(r"__(?=\S)(.+?)(?<=\S)__", re.S)
 _MD_HEADING = re.compile(r"^\s{0,3}#{1,6}[ \t]+", re.M)
 _MD_BULLET = re.compile(r"^\s{0,3}[-*+][ \t]+", re.M)
 
 
 def to_mrkdwn(text: str) -> str:
-    """Normalise model output into Slack's mrkdwn dialect."""
-    text = _MD_BOLD.sub(r"*\1*", text)
-    text = _MD_UNDER.sub(r"_\1_", text)
+    """Normalise model output into Slack's mrkdwn, emphasis folded to code."""
+    text = _MD_BULLET.sub("", text)  # before the bold rules: `* item` is not emphasis
+    text = _MD_BOLD.sub(r"`\1`", text)
+    text = _SLACK_BOLD.sub(r"`\1`", text)
+    text = _MD_UNDER.sub(r"`\1`", text)
     text = _MD_HEADING.sub("", text)
-    text = _MD_BULLET.sub("", text)
     return text.strip()
 
 
