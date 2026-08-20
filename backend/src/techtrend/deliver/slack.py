@@ -118,6 +118,16 @@ def _trunc(s: str, n: int) -> str:
     return s if len(s) <= n else s[: n - 1].rstrip() + "…"
 
 
+def _decode(s: str) -> str:
+    """Publisher titles arrive with HTML entities intact: `Here&#8217;s`."""
+    return html.unescape(s)
+
+
+def _esc_only(s: str) -> str:
+    """Escape for Slack. Input must already be decoded."""
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def _esc(s: str) -> str:
     """Slack consumes &, < and > as markup even inside plain text.
 
@@ -142,7 +152,13 @@ def story_blocks(
     would appear twice in the channel. What survives is what the unfurl has
     no way to know -- which topics matched, and how many outlets carried it.
     """
-    heading = f"<{url}|*{_esc(_trunc(title, 200))}*>"
+    # Decode BEFORE truncating: `_esc` expands & to &amp;, so escaping first
+    # then cutting at 200 can slice an entity in half. The fallback gets the
+    # same treatment as the heading -- it is not a spare copy of the raw title,
+    # it is what Slack shows in push notifications and message previews, so a
+    # raw `&#8217;` here reaches every phone in the channel.
+    plain = _trunc(_decode(title), 200)
+    heading = f"<{url}|*{_esc_only(plain)}*>"
 
     meta = [_esc(site)]
     if source_count > 1:
@@ -154,7 +170,7 @@ def story_blocks(
         {"type": "section", "text": {"type": "mrkdwn", "text": heading}},
         {"type": "context", "elements": [{"type": "mrkdwn", "text": " · ".join(meta)}]},
     ]
-    return _trunc(title, 200), blocks
+    return _esc_only(plain), blocks
 
 
 def followup_text(source_count: int) -> str:

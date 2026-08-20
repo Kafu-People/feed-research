@@ -6,6 +6,7 @@ No I/O: httpx is mocked with respx, exactly as the collect units do it.
 from __future__ import annotations
 
 import json
+import re
 
 import httpx
 import pytest
@@ -62,6 +63,30 @@ def test_slack_markup_characters_are_escaped() -> None:
     _, blocks = _blocks(title="Nvidia <b> & AMD")
     text = blocks[0]["text"]["text"]
     assert "&lt;b&gt;" in text and "&amp;" in text and "<b>" not in text
+
+
+def test_fallback_text_is_decoded_too() -> None:
+    """The fallback is Slack's push-notification text, not a spare copy.
+
+    A raw `&#8217;` here reaches every phone in the channel even though the
+    rendered block looks fine.
+    """
+    fallback, blocks = _blocks(title="Here&#8217;s why it matters")
+    assert fallback == "Here\u2019s why it matters"
+    assert "&#8217;" not in fallback
+
+
+def test_fallback_truncation_never_slices_an_entity() -> None:
+    """Decode before truncating, so the 200-char cut lands on real characters.
+
+    Escaping first would expand & to &amp; and the cut could then land inside
+    it, shipping a dangling `&am`. Note the escaped result may exceed 200 chars
+    for that reason -- the limit is on the decoded text, well under Slack's own.
+    """
+    fallback, _ = _blocks(title="x" * 195 + " a &amp; b")
+    assert "&amp;" in fallback
+    # Every & in the output opens a complete entity; none is a sliced fragment.
+    assert re.search(r"&(?!amp;|lt;|gt;)", fallback) is None
 
 
 def test_publisher_html_entities_are_decoded_before_escaping() -> None:

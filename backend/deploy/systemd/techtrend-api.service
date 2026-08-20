@@ -1,0 +1,12 @@
+[Unit]
+Description=TechTrend API
+After=network-online.target
+
+[Service]
+WorkingDirectory=/opt/TechTrend/backend
+ExecStart=/opt/TechTrend/backend/.venv/bin/techtrend api --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

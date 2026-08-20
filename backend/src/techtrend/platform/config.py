@@ -113,6 +113,9 @@ class Settings(BaseSettings):
     worker_concurrency: int = 8
     worker_poll_idle_s: float = 0.5
     job_lease_minutes: int = 15
+    # How often the worker enqueues its own maintenance job (reap stale locks,
+    # purge done rows). Nothing else enqueues it -- see cli._sweep_maintenance.
+    maintenance_interval_s: int = 300
 
     # --- auth -----------------------------------------------------------
     jwt_secret: SecretStr = SecretStr("dev-secret")

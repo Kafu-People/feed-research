@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import signal
+import time
 from typing import Annotated
 
 import typer
@@ -15,6 +16,7 @@ import typer
 from techtrend import __version__
 from techtrend.platform import queue, telemetry
 from techtrend.platform.config import check_production_invariants, settings
+from techtrend.platform.types import PRIORITY_BACKFILL
 
 app = typer.Typer(add_completion=False, help="TechTrend")
 
@@ -340,6 +342,22 @@ HANDLERS = {
 }
 
 
+async def _sweep_maintenance() -> None:
+    """Enqueue the maintenance job. Nothing else ever will.
+
+    `maintenance` was in HANDLERS and in the unit's --stage list from the start,
+    but no code path inserted a job row -- so `reap_stale` and `purge_done` had
+    never run once. The queue grew unbounded, and a worker restart orphaned
+    every in-flight job permanently, because reclaiming them IS `reap_stale`.
+
+    Keyed by time bucket, so this is idempotent across loop iterations and
+    across concurrent workers: whoever gets there first inserts, the rest hit
+    ON CONFLICT DO NOTHING.
+    """
+    bucket = int(time.time()) // settings().maintenance_interval_s
+    await queue.enqueue("maintenance", f"maintenance:{bucket}", priority=PRIORITY_BACKFILL)
+
+
 async def _run_worker(stages: list[str], concurrency: int) -> None:
     unknown = set(stages) - HANDLERS.keys()
     if unknown:
@@ -359,10 +377,14 @@ async def _run_worker(stages: list[str], concurrency: int) -> None:
 
         sweep = collect_worker.sweep_due
 
+    do_maintenance = "maintenance" in stages
+
     while not stop.is_set():
         if sweep is not None:
             # The scheduler is the `next_check_at` column; this is its only reader.
             await sweep()
+        if do_maintenance:
+            await _sweep_maintenance()
         jobs = await queue.claim(stages, batch=concurrency)
         if not jobs:
             # Graceful shutdown: stop claiming, let in-flight jobs finish.

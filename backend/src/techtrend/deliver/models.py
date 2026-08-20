@@ -30,6 +30,11 @@ class SlackPost(Base):
     # Source count as of the last message sent about this story; a later merge
     # raising it above this is what earns a threaded follow-up.
     source_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    # The threaded summary reply, when one was posted. NULL means a guard
+    # declined it (thin extraction, no body, model returned SKIP) -- which is a
+    # normal outcome, not a failure. Recorded so a future reformat can address
+    # the message directly instead of scanning the thread for it.
+    summary_ts: Mapped[str | None] = mapped_column(Text)
     posted_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -46,6 +46,10 @@ _RECORD = text("""
 
 _BUMP = text("UPDATE slack_posts SET source_count = :n WHERE story_id = :id AND channel = :ch")
 
+_RECORD_SUMMARY = text(
+    "UPDATE slack_posts SET summary_ts = :ts WHERE story_id = :id AND channel = :ch"
+)
+
 
 def configured() -> bool:
     """Both halves or nothing -- a token without a channel posts into the void."""
@@ -166,8 +170,10 @@ async def _reply_summary(
             # The model itself judged the text unsummarisable (paywall, nav menu).
             telemetry.log.info("notify.summary_skipped", story_id=story_id, reason="model_declined")
             return
-        await client.post(channel, to_mrkdwn(summary), thread_ts=thread_ts)
-        telemetry.log.info("notify.summary_posted", story_id=story_id, chars=len(summary))
+        ts = await client.post(channel, to_mrkdwn(summary), thread_ts=thread_ts)
+        async with session_scope() as sess:
+            await sess.execute(_RECORD_SUMMARY, {"id": story_id, "ch": channel, "ts": ts})
+        telemetry.log.info("notify.summary_posted", story_id=story_id, ts=ts, chars=len(summary))
     except Exception:  # noqa: BLE001 - a summary must never cost us the card
         telemetry.log.exception("notify.summary_failed", story_id=story_id)
 

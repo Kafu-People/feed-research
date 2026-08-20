@@ -1,0 +1,12 @@
+[Unit]
+Description=TechTrend web (Next.js)
+After=network-online.target
+
+[Service]
+WorkingDirectory=/opt/TechTrend/clients/apps/web
+ExecStart=/home/idavoll/.local/lib/node24/bin/pnpm start
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
