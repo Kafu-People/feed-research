@@ -1,0 +1,12 @@
+[Unit]
+Description=TechTrend Slack Q&A listener (Socket Mode)
+After=network-online.target
+
+[Service]
+WorkingDirectory=/opt/TechTrend/backend
+ExecStart=/opt/TechTrend/backend/.venv/bin/techtrend slackbot
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

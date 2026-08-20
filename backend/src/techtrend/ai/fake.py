@@ -45,6 +45,11 @@ class FakeAIClient:
             novelty_rationale="fake client: fixed mid-range novelty",
         )
 
+    async def answer(self, question: str, title: str, body: str, _thread: str) -> str:
+        if question.strip().endswith("?") and question.lower().split()[:1] == ["when"]:
+            return "The article doesn't say."
+        return f"About {title.rstrip('.')}: {question.strip().rstrip('?')} -- per the article, yes."
+
     async def summarize(self, title: str, body: str) -> str | None:
         if len(body) < 200:
             return None  # mirrors the real client's SKIP on thin extraction

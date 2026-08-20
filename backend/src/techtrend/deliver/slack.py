@@ -15,7 +15,8 @@ import httpx
 from techtrend.platform import queue
 from techtrend.platform.config import settings
 
-_API = "https://slack.com/api/chat.postMessage"
+_POST = "https://slack.com/api/chat.postMessage"
+_REPLIES = "https://slack.com/api/conversations.replies"
 
 # Retrying these never helps: the token, the scope or the channel is wrong, and
 # a human has to fix it. Dead-letter immediately rather than burn the queue.
@@ -70,7 +71,7 @@ class SlackClient:
 
         async with httpx.AsyncClient(timeout=settings().slack_timeout_s) as c:
             try:
-                resp = await c.post(_API, headers=self._headers, json=body)
+                resp = await c.post(_POST, headers=self._headers, json=body)
             except httpx.HTTPError as e:
                 raise queue.RetryableError(f"slack unreachable: {e!r}") from e
 
@@ -86,6 +87,28 @@ class SlackClient:
                 raise queue.FatalError(f"slack: {err}")
             raise queue.RetryableError(f"slack: {err}")
         return str(data["ts"])
+
+    async def replies(self, channel: str, thread_ts: str, limit: int = 30) -> list[dict[str, Any]]:
+        """Fetch a thread. `channel` must be an ID (C...), not a #name --
+        conversations.* resolve by ID only, unlike chat.postMessage."""
+        async with httpx.AsyncClient(timeout=settings().slack_timeout_s) as c:
+            try:
+                resp = await c.get(
+                    _REPLIES,
+                    headers=self._headers,
+                    params={"channel": channel, "ts": thread_ts, "limit": limit},
+                )
+            except httpx.HTTPError as e:
+                raise queue.RetryableError(f"slack unreachable: {e!r}") from e
+        if resp.status_code != httpx.codes.OK:
+            raise queue.RetryableError(f"slack http {resp.status_code}")
+        data = resp.json()
+        if not data.get("ok"):
+            err = str(data.get("error", "unknown"))
+            if err in _FATAL:
+                raise queue.FatalError(f"slack: {err}")
+            raise queue.RetryableError(f"slack: {err}")
+        return list(data.get("messages", []))
 
 
 # Highlighting is a backticked span: Slack renders it in a tinted box, which

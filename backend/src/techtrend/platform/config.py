@@ -62,6 +62,12 @@ class Settings(BaseSettings):
     # story. Haiku is fast, cheap and good at it -- measured 2026-08-20 at
     # ~830 input / ~110 output tokens per article, about $1.20/month at 28/day.
     ai_summary_model: str = "claude-haiku-4-5"
+    # Answering is reasoning, not rewriting: the reader is asking something the
+    # article does not state outright, and the failure we care about -- a
+    # confident answer from memory rather than from the text -- is what a
+    # weaker model does more often. ~$0.012/question, ~$7/month at 20/day.
+    ai_answer_model: str = "claude-opus-5"
+    ai_answer_effort: Effort = "medium"
     ai_judge_effort: Effort = "medium"
     ai_distill_effort: Effort = "low"
     ai_batch_enabled: bool = True
@@ -108,6 +114,14 @@ class Settings(BaseSettings):
     # Extraction is imperfect. Below this, the "article" is usually a paywall
     # notice or a nav menu -- not worth an API call, and worse if summarised.
     slack_summary_min_chars: int = 600
+    # Socket Mode app-level token (xapp-, scope connections:write). Without it
+    # the Q&A listener will not start -- there is no public HTTPS endpoint on
+    # this host for Slack's Events API to reach, so the outbound WebSocket is
+    # the only way in.
+    slack_app_token: SecretStr | None = None
+    # A question can pull in the whole article; cap what we send.
+    slack_qa_max_body_chars: int = 12000
+    slack_qa_max_thread_msgs: int = 20
 
     # --- worker ---------------------------------------------------------
     worker_concurrency: int = 8

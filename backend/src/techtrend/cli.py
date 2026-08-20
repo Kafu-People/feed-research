@@ -49,6 +49,24 @@ def api(
 
 
 @app.command()
+def slackbot() -> None:
+    """Answer @mentions in Slack story threads (Socket Mode listener)."""
+    from techtrend.deliver import socket as slackbot_socket
+
+    async def _run() -> None:
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, stop.set)
+        try:
+            await slackbot_socket.run(stop)
+        except slackbot_socket.NotConfigured as e:
+            raise typer.BadParameter(str(e)) from e
+
+    asyncio.run(_run())
+
+
+@app.command()
 def worker(
     stage: Annotated[str, typer.Option(help="comma-separated stages")] = "maintenance",
     concurrency: int = 0,

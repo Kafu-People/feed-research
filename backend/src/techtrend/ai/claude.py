@@ -23,6 +23,7 @@ _PROMPTS = Path(__file__).parent / "prompts"
 JUDGE_SYSTEM = (_PROMPTS / "judge.md").read_text()
 DISTILL_SYSTEM = (_PROMPTS / "distill.md").read_text()
 SUMMARIZE_SYSTEM = (_PROMPTS / "summarize.md").read_text()
+ANSWER_SYSTEM = (_PROMPTS / "answer.md").read_text()
 
 
 class Refused(Exception):
@@ -69,6 +70,46 @@ class ClaudeClient:
             raise Refused(cat)
         _observe("judge", resp.usage, model=s.ai_model)
         return cast("JudgeResult", resp.parsed_output)
+
+    async def answer(self, question: str, title: str, body: str, thread: str) -> str:
+        """Answer a question about one article, grounded in its text.
+
+        Opus because a question is reasoning, not rewriting: the reader is
+        asking something the article does not state outright, and the failure
+        mode we care about -- answering confidently from memory instead of from
+        the text -- is exactly what a weaker model does more often.
+        """
+        s = settings()
+        resp = await self._c.messages.create(
+            model=s.ai_answer_model,
+            # Headroom for THINKING, not just the reply: thinking is on by
+            # default on claude-opus-5 and max_tokens caps thinking + text.
+            max_tokens=8000,
+            output_config={"effort": s.ai_answer_effort},
+            system=[
+                {
+                    "type": "text",
+                    "text": ANSWER_SYSTEM,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"<article>\n<headline>{title}</headline>\n{body}\n</article>\n"
+                        f"<thread_so_far>\n{thread}\n</thread_so_far>\n"
+                        f"<question>\n{question}\n</question>"
+                    ),
+                }
+            ],
+        )
+        if resp.stop_reason == "refusal":
+            cat = getattr(resp.stop_details, "category", None) if resp.stop_details else None
+            raise Refused(cat)
+        _observe("answer", resp.usage, model=s.ai_answer_model)
+        text = "".join(b.text for b in resp.content if b.type == "text").strip()
+        return text or "I could not produce an answer for that one."
 
     async def summarize(self, title: str, body: str) -> str | None:
         """Plain-language summary for a chat channel. None when unsummarisable.
