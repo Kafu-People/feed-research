@@ -13,6 +13,7 @@ import techtrend.platform.models  # noqa: F401
 import techtrend.shared.models  # noqa: F401
 import techtrend.topic.models  # noqa: F401
 import techtrend.personal.models  # noqa: F401
+import techtrend.deliver.models  # noqa: F401
 
 config = context.config
 if config.config_file_name:

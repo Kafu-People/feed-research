@@ -313,6 +313,12 @@ async def _feedback(job: queue.Job) -> None:
     await learn.run(job)
 
 
+async def _notify(job: queue.Job) -> None:
+    from techtrend.deliver import worker as notify_worker
+
+    await notify_worker.run(job)
+
+
 async def _maintenance(job: queue.Job) -> None:
     reclaimed = await queue.reap_stale()
     if reclaimed:
@@ -329,6 +335,7 @@ HANDLERS = {
     "judge": _judge,
     "match": _match,
     "feedback": _feedback,
+    "notify": _notify,
     "maintenance": _maintenance,
 }
 

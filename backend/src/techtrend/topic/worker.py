@@ -11,6 +11,7 @@ Idempotent: PRIMARY KEY (topic_id, story_id) upsert.
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import text
 
@@ -19,8 +20,11 @@ from techtrend.platform.config import settings
 from techtrend.platform.db import session_scope
 from techtrend.topic.match import StoryText, evaluate, searchable
 
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
 _LOAD_STORY = text("""
-    SELECT st.id, a.title, a.description, a.entities,
+    SELECT st.id, st.source_count, a.title, a.description, a.entities,
            CAST(st.embedding AS text) AS embedding
       FROM stories st JOIN articles a ON a.id = st.display_article_id
      WHERE st.id = :id
@@ -128,8 +132,42 @@ async def run(job: queue.Job) -> None:
         async with session_scope() as s:
             for r in rows:
                 await s.execute(_UPSERT, r)
+            # Announce in the same transaction as the match that justifies it:
+            # either both land or neither does. The notify stage re-checks the
+            # floor at run time, so this is a coarse gate, not the decision.
+            await _maybe_notify(story_id, row.source_count, rows, session=s)
     telemetry.log.info(
         "match.done", story_id=story_id, candidates=len(candidate_ids), matched=len(rows)
+    )
+
+
+async def _maybe_notify(
+    story_id: int, source_count: int, rows: list[dict[str, Any]], *, session: AsyncSession
+) -> None:
+    """Enqueue a Slack announcement if any match clears the configured bar.
+
+    Deliberately NOT called from `_backfill_topic`: retro-matching a new topic
+    against 30 days of corpus is not news, and must never reach a channel.
+    """
+    from techtrend.deliver.worker import configured
+
+    if not configured():
+        return
+    s = settings()
+    watched = set(s.slack_topic_ids)
+    qualifies = any(
+        r["score"] >= s.slack_match_floor and (not watched or r["topic_id"] in watched)
+        for r in rows
+    )
+    if not qualifies:
+        return
+    # source_count in the key: a story that gains a source earns exactly one
+    # threaded follow-up per new count, and re-running match never re-posts.
+    await queue.enqueue(
+        "notify",
+        f"notify:story:{story_id}:{source_count}",
+        {"story_id": story_id},
+        session=session,
     )
 
 

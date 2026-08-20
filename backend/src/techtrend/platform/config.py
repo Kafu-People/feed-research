@@ -84,6 +84,21 @@ class Settings(BaseSettings):
     # NOTE: there is deliberately no `dashboard_min_cards`. Invariant #10 --
     # never pad a short day -- is enforced by the absence of a floor.
 
+    # --- slack delivery --------------------------------------------------
+    # Bot token (xoxb-, scope chat:write) + the channel it posts into. Both
+    # unset = the notify stage is inert and nothing is ever enqueued.
+    slack_bot_token: SecretStr | None = None
+    slack_channel: str | None = None  # "#tech-updates" or a channel id
+    # Which topics reach Slack. EMPTY MEANS EVERY TOPIC -- narrow it in .env
+    # (TT_SLACK_TOPIC_IDS='[1,3,13]'), widen it by removing the var.
+    slack_topic_ids: list[int] = Field(default_factory=list)
+    # Calibrated 2026-08-20 against the live corpus: on the AI topics, >=0.5
+    # yields ~50 stories/day, >=0.6 ~28/day (about one an hour), >=0.7 ~4/day.
+    slack_match_floor: float = Field(default=0.6, ge=0.0, le=1.0)
+    # A backlog is not news. Nothing older than this is ever announced.
+    slack_max_age_hours: float = 24.0
+    slack_timeout_s: float = 15.0
+
     # --- worker ---------------------------------------------------------
     worker_concurrency: int = 8
     worker_poll_idle_s: float = 0.5

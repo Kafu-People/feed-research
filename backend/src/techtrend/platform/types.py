@@ -25,6 +25,7 @@ class Stage(StrEnum):
     JUDGE = "judge"
     MATCH = "match"
     FEEDBACK = "feedback"
+    NOTIFY = "notify"
     MAINTENANCE = "maintenance"
 
 
