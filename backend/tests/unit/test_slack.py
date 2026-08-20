@@ -11,7 +11,7 @@ import httpx
 import pytest
 import respx
 
-from techtrend.deliver.slack import SlackClient, followup_text, story_blocks
+from techtrend.deliver.slack import SlackClient, followup_text, story_blocks, to_mrkdwn
 from techtrend.platform import queue
 from techtrend.platform.config import settings
 
@@ -153,3 +153,34 @@ async def test_missing_token_is_fatal(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     with pytest.raises(queue.FatalError):
         slack_mod.SlackClient()
+
+
+# --------------------------------------------------------- mrkdwn normalising
+
+
+def test_markdown_bold_becomes_slack_bold() -> None:
+    """Slack bolds on ONE asterisk; `**x**` leaves the spare pair visible."""
+    assert to_mrkdwn("OpenAI will **go public** soon.") == "OpenAI will *go public* soon."
+
+
+def test_correct_slack_bold_is_left_alone() -> None:
+    assert to_mrkdwn("already *correct* here") == "already *correct* here"
+
+
+def test_multiple_bold_spans_all_convert() -> None:
+    out = to_mrkdwn("**Anthropic** raised **$2bn** today")
+    assert out == "*Anthropic* raised *$2bn* today"
+
+
+def test_headings_and_bullets_are_stripped() -> None:
+    assert to_mrkdwn("# The Gist\nSome text") == "The Gist\nSome text"
+    assert to_mrkdwn("- a bullet") == "a bullet"
+
+
+def test_underscore_bold_becomes_italic() -> None:
+    assert to_mrkdwn("a __span__ here") == "a _span_ here"
+
+
+def test_lone_asterisks_are_not_mangled() -> None:
+    """A stray asterisk (a footnote marker, a glob) must survive untouched."""
+    assert to_mrkdwn("the file *.py and a * alone") == "the file *.py and a * alone"

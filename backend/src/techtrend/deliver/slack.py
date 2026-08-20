@@ -7,6 +7,7 @@ error taxonomy below is the part that actually matters.
 from __future__ import annotations
 
 import html
+import re
 from typing import Any
 
 import httpx
@@ -85,6 +86,25 @@ class SlackClient:
                 raise queue.FatalError(f"slack: {err}")
             raise queue.RetryableError(f"slack: {err}")
         return str(data["ts"])
+
+
+# Markdown and Slack's mrkdwn disagree on exactly the characters a model reaches
+# for. `**bold**` is Markdown; Slack bolds on a SINGLE asterisk and renders the
+# spare pair as literal characters. The prompt asks for Slack's dialect; this is
+# the guard for when a model answers in Markdown anyway.
+_MD_BOLD = re.compile(r"\*\*+(?=\S)(.+?)(?<=\S)\*\*+", re.S)
+_MD_UNDER = re.compile(r"__(?=\S)(.+?)(?<=\S)__", re.S)
+_MD_HEADING = re.compile(r"^\s{0,3}#{1,6}[ \t]+", re.M)
+_MD_BULLET = re.compile(r"^\s{0,3}[-*+][ \t]+", re.M)
+
+
+def to_mrkdwn(text: str) -> str:
+    """Normalise model output into Slack's mrkdwn dialect."""
+    text = _MD_BOLD.sub(r"*\1*", text)
+    text = _MD_UNDER.sub(r"_\1_", text)
+    text = _MD_HEADING.sub("", text)
+    text = _MD_BULLET.sub("", text)
+    return text.strip()
 
 
 def _trunc(s: str, n: int) -> str:

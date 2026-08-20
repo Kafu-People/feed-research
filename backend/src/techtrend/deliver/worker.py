@@ -12,7 +12,7 @@ import asyncio
 from sqlalchemy import text
 
 from techtrend.ai.client import client as ai_client
-from techtrend.deliver.slack import SlackClient, followup_text, story_blocks
+from techtrend.deliver.slack import SlackClient, followup_text, story_blocks, to_mrkdwn
 from techtrend.platform import blobs, queue, telemetry
 from techtrend.platform.config import settings
 from techtrend.platform.db import session_scope
@@ -166,7 +166,7 @@ async def _reply_summary(
             # The model itself judged the text unsummarisable (paywall, nav menu).
             telemetry.log.info("notify.summary_skipped", story_id=story_id, reason="model_declined")
             return
-        await client.post(channel, summary, thread_ts=thread_ts)
+        await client.post(channel, to_mrkdwn(summary), thread_ts=thread_ts)
         telemetry.log.info("notify.summary_posted", story_id=story_id, chars=len(summary))
     except Exception:  # noqa: BLE001 - a summary must never cost us the card
         telemetry.log.exception("notify.summary_failed", story_id=story_id)
