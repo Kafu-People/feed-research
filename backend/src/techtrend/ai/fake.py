@@ -45,6 +45,11 @@ class FakeAIClient:
             novelty_rationale="fake client: fixed mid-range novelty",
         )
 
+    async def summarize(self, title: str, body: str) -> str | None:
+        if len(body) < 200:
+            return None  # mirrors the real client's SKIP on thin extraction
+        return f"{title.rstrip('.')}. In plain terms, this is what the coverage says."
+
     async def distill(self, sentence: str) -> TopicDraft:
         words = [w for w in re.findall(r"[\w-]+", sentence.lower()) if w not in _STOP]
         must = [w for w in words if len(w) > 2][:6] or ["news"]

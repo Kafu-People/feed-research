@@ -22,6 +22,7 @@ _PROMPTS = Path(__file__).parent / "prompts"
 # a build hash into the system prompt silently kills prompt caching.
 JUDGE_SYSTEM = (_PROMPTS / "judge.md").read_text()
 DISTILL_SYSTEM = (_PROMPTS / "distill.md").read_text()
+SUMMARIZE_SYSTEM = (_PROMPTS / "summarize.md").read_text()
 
 
 class Refused(Exception):
@@ -68,6 +69,34 @@ class ClaudeClient:
             raise Refused(cat)
         _observe("judge", resp.usage, model=s.ai_model)
         return cast("JudgeResult", resp.parsed_output)
+
+    async def summarize(self, title: str, body: str) -> str | None:
+        """Plain-language summary for a chat channel. None when unsummarisable.
+
+        No `output_config.effort` and no thinking: both error on Haiku 4.5, and
+        a 2-sentence rewrite needs neither. No `cache_control` either -- this
+        system prompt is well under Haiku 4.5's 4096-token cache minimum, so a
+        breakpoint here would never produce a hit.
+        """
+        s = settings()
+        resp = await self._c.messages.create(
+            model=s.ai_summary_model,
+            max_tokens=400,
+            system=[{"type": "text", "text": SUMMARIZE_SYSTEM}],
+            messages=[{"role": "user", "content": f"{title}\n\n{body}"}],
+        )
+        # Check stop_reason BEFORE reading content: a refusal is HTTP 200 with
+        # an empty or partial content array.
+        if resp.stop_reason == "refusal":
+            cat = getattr(resp.stop_details, "category", None) if resp.stop_details else None
+            raise Refused(cat)
+        _observe("summarize", resp.usage, model=s.ai_summary_model)
+
+        text = "".join(b.text for b in resp.content if b.type == "text").strip()
+        # The prompt's own escape hatch for boilerplate that survived extraction.
+        if not text or text.strip().rstrip(".") == "SKIP":
+            return None
+        return text
 
     async def distill(self, sentence: str) -> TopicDraft:
         s = settings()

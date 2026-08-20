@@ -7,16 +7,19 @@ re-checked against current settings the moment it runs.
 
 from __future__ import annotations
 
+import asyncio
+
 from sqlalchemy import text
 
+from techtrend.ai.client import client as ai_client
 from techtrend.deliver.slack import SlackClient, followup_text, story_blocks
-from techtrend.platform import queue, telemetry
+from techtrend.platform import blobs, queue, telemetry
 from techtrend.platform.config import settings
 from techtrend.platform.db import session_scope
 
 # Invariant #3: a publisher opt-out gates serving, and Slack is serving.
 _LOAD = text("""
-    SELECT st.id, st.source_count, a.title, a.url, a.published_at, s.name AS site
+    SELECT st.id, st.source_count, a.title, a.url, a.published_at, a.text_key, s.name AS site
       FROM stories st
       JOIN articles a ON a.id = st.display_article_id
       JOIN sites s ON s.id = a.site_id
@@ -112,6 +115,11 @@ async def run(job: queue.Job) -> None:
             sources=row.source_count,
             score=round(float(topics[0].match_score), 3),
         )
+        # Strictly after the ledger write: if this raised before `_RECORD`, the
+        # retry would post the card a second time.
+        await _reply_summary(
+            client, channel, ts, story_id=story_id, title=row.title, text_key=row.text_key
+        )
         return
 
     # Already announced. A story that has since gained sources earns one
@@ -124,6 +132,44 @@ async def run(job: queue.Job) -> None:
     telemetry.log.info(
         "notify.followup", story_id=story_id, channel=channel, sources=row.source_count
     )
+
+
+async def _reply_summary(
+    client: SlackClient,
+    channel: str,
+    thread_ts: str,
+    *,
+    story_id: int,
+    title: str,
+    text_key: str | None,
+) -> None:
+    """Post a plain-language summary under the card. Best effort, never fatal.
+
+    The card is already posted and recorded by the time this runs. A summary is
+    a bonus on top of it, so every failure here -- blob missing, model down,
+    Slack refusing the reply -- is logged and swallowed rather than failing the
+    job and dragging the whole story through a retry.
+    """
+    s = settings()
+    if not s.slack_summaries or not text_key:
+        return
+    try:
+        raw = await asyncio.to_thread(blobs.get, text_key)
+        body = raw.decode("utf-8", "replace")
+        if len(body) < s.slack_summary_min_chars:
+            telemetry.log.info(
+                "notify.summary_skipped", story_id=story_id, reason="thin_text", chars=len(body)
+            )
+            return
+        summary = await ai_client().summarize(title, body)
+        if not summary:
+            # The model itself judged the text unsummarisable (paywall, nav menu).
+            telemetry.log.info("notify.summary_skipped", story_id=story_id, reason="model_declined")
+            return
+        await client.post(channel, summary, thread_ts=thread_ts)
+        telemetry.log.info("notify.summary_posted", story_id=story_id, chars=len(summary))
+    except Exception:  # noqa: BLE001 - a summary must never cost us the card
+        telemetry.log.exception("notify.summary_failed", story_id=story_id)
 
 
 def _hours_since(when: object) -> float:

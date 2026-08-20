@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     # Distill is expansion, not judgment, and the user is WAITING (~2s budget).
     # Haiku is fast and cheap and good at it; judging quality stays on ai_model.
     ai_distill_model: str = "claude-haiku-4-5"
+    # Summarising is rewriting, not judgment, and it runs once per posted
+    # story. Haiku is fast, cheap and good at it -- measured 2026-08-20 at
+    # ~830 input / ~110 output tokens per article, about $1.20/month at 28/day.
+    ai_summary_model: str = "claude-haiku-4-5"
     ai_judge_effort: Effort = "medium"
     ai_distill_effort: Effort = "low"
     ai_batch_enabled: bool = True
@@ -98,6 +102,12 @@ class Settings(BaseSettings):
     # A backlog is not news. Nothing older than this is ever announced.
     slack_max_age_hours: float = 24.0
     slack_timeout_s: float = 15.0
+    # Post a plain-language summary as a threaded reply under each card.
+    # Costs one Haiku call per story; set false to stop spending entirely.
+    slack_summaries: bool = True
+    # Extraction is imperfect. Below this, the "article" is usually a paywall
+    # notice or a nav menu -- not worth an API call, and worse if summarised.
+    slack_summary_min_chars: int = 600
 
     # --- worker ---------------------------------------------------------
     worker_concurrency: int = 8
