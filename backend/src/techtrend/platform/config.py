@@ -105,6 +105,12 @@ class Settings(BaseSettings):
     # Calibrated 2026-08-20 against the live corpus: on the AI topics, >=0.5
     # yields ~50 stories/day, >=0.6 ~28/day (about one an hour), >=0.7 ~4/day.
     slack_match_floor: float = Field(default=0.6, ge=0.0, le=1.0)
+    # Per-topic overrides, because one floor cannot serve topics with different
+    # score distributions. Job listings score lower than news stories -- the
+    # boilerplate board description gives the matcher little to work with -- so
+    # 0.6 yields one qualifying listing every ten days, while the same floor on
+    # AI models & labs already yields 27/day. Keyed by topic id.
+    slack_topic_floors: dict[int, float] = Field(default_factory=dict)
     # A backlog is not news. Nothing older than this is ever announced.
     slack_max_age_hours: float = 24.0
     slack_timeout_s: float = 15.0

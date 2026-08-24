@@ -28,13 +28,26 @@ _LOAD = text("""
 """)
 
 _TOPICS = text("""
-    SELECT t.title, m.match_score
+    SELECT t.id, t.title, m.match_score
       FROM matches m JOIN topics t ON t.id = m.topic_id
      WHERE m.story_id = :id
-       AND m.match_score >= :floor
        AND (:unfiltered OR m.topic_id = ANY(:topic_ids))
      ORDER BY m.match_score DESC
 """)
+
+
+def floor_for(topic_id: int) -> float:
+    """The bar this topic must clear to reach Slack.
+
+    Scores are not comparable across topics: a job listing and a news story
+    that both "match well" land at different numbers, because the matcher sees
+    a boilerplate board description in one case and a real headline in the
+    other. One global floor therefore either floods the loud topics or starves
+    the quiet ones.
+    """
+    s = settings()
+    return s.slack_topic_floors.get(topic_id, s.slack_match_floor)
+
 
 _EXISTING = text("SELECT ts, source_count FROM slack_posts WHERE story_id = :id AND channel = :ch")
 
@@ -70,18 +83,21 @@ async def run(job: queue.Job) -> None:
         row = (await sess.execute(_LOAD, {"id": story_id})).one_or_none()
         if row is None:
             return  # deleted, or the publisher opted out after the match
-        topics = (
+        rows = (
             await sess.execute(
                 _TOPICS,
                 {
                     "id": story_id,
-                    "floor": s.slack_match_floor,
                     "unfiltered": not s.slack_topic_ids,
                     "topic_ids": list(s.slack_topic_ids),
                 },
             )
         ).all()
         existing = (await sess.execute(_EXISTING, {"id": story_id, "ch": channel})).one_or_none()
+
+    # Filtered here rather than in SQL: the bar is per topic, and a CASE
+    # expression over a settings dict would be worse than a list comprehension.
+    topics = [t for t in rows if t.match_score >= floor_for(t.id)]
 
     if not topics:
         # Re-scored below the floor, or the topic filter narrowed since enqueue.

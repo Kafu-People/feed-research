@@ -220,3 +220,26 @@ def test_lone_asterisks_are_not_mangled() -> None:
 def test_a_bullet_line_is_not_read_as_emphasis() -> None:
     """`* item` opens with an asterisk but is a list marker, not a bold span."""
     assert to_mrkdwn("* first item") == "first item"
+
+
+# --------------------------------------------------------- per-topic floors
+
+
+def test_floor_falls_back_to_the_global_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    from techtrend.deliver.worker import floor_for
+
+    monkeypatch.setenv("TT_SLACK_MATCH_FLOOR", "0.6")
+    monkeypatch.delenv("TT_SLACK_TOPIC_FLOORS", raising=False)
+    settings.cache_clear()
+    assert floor_for(3) == 0.6
+
+
+def test_per_topic_floor_overrides_the_global(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Job listings score lower than news; one global bar cannot serve both."""
+    from techtrend.deliver.worker import floor_for
+
+    monkeypatch.setenv("TT_SLACK_MATCH_FLOOR", "0.6")
+    monkeypatch.setenv("TT_SLACK_TOPIC_FLOORS", '{"15": 0.5}')
+    settings.cache_clear()
+    assert floor_for(15) == 0.5  # overridden
+    assert floor_for(3) == 0.6  # untouched

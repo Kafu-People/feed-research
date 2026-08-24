@@ -149,14 +149,13 @@ async def _maybe_notify(
     Deliberately NOT called from `_backfill_topic`: retro-matching a new topic
     against 30 days of corpus is not news, and must never reach a channel.
     """
-    from techtrend.deliver.worker import configured
+    from techtrend.deliver.worker import configured, floor_for
 
     if not configured():
         return
-    s = settings()
-    watched = set(s.slack_topic_ids)
+    watched = set(settings().slack_topic_ids)
     qualifies = any(
-        r["score"] >= s.slack_match_floor and (not watched or r["topic_id"] in watched)
+        r["score"] >= floor_for(r["topic_id"]) and (not watched or r["topic_id"] in watched)
         for r in rows
     )
     if not qualifies:
