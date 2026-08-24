@@ -181,7 +181,17 @@ TOPICS: list[SeedTopic] = [
             "hybrid work",
             "four-day week",
         ],
+        # US terms sit in `should`, not in `entities`. `entities` is an AND
+        # gate, and only 18% of matches name the country in title/description
+        # -- Indeed's own "Labor Market Snapshot" does, an HR Dive piece on US
+        # employment law often does not. Gating on it would drop most of the
+        # feed to enforce something the source list already largely enforces:
+        # Hiring Lab, HR Dive and HR Executive are US publications.
         "should": [
+            "US",
+            "U.S.",
+            "United States",
+            "American",
             "remote",
             "employment",
             "recruiting",
@@ -193,30 +203,6 @@ TOPICS: list[SeedTopic] = [
             "workers",
         ],
         "exclude": [],
-        "entities": [],
-    },
-    {
-        # Open positions from the remote job boards.
-        #
-        # NOTE: the matcher reads title + description ONLY, never the body.
-        # Board descriptions are boilerplate ("X is hiring a remote Y to join
-        # their remote Z team") -- they always contain "remote" and never
-        # contain the country or the hybrid caveat that would disqualify a
-        # role. So `exclude` fires only on the rare listing that says "hybrid"
-        # in its title. Measured, not assumed: see the precision figures in the
-        # commit message.
-        "title": "Fully remote jobs",
-        "must": ["remote"],
-        "should": [
-            "united states",
-            "usa",
-            "americas",
-            "engineer",
-            "developer",
-            "designer",
-            "manager",
-        ],
-        "exclude": ["hybrid", "on-site", "onsite", "in-office"],
         "entities": [],
     },
     {

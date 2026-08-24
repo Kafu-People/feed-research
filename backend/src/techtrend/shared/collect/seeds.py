@@ -305,32 +305,21 @@ WORK_TREND: list[Seed] = [
     ),
 ]
 
-# Listings. Tier C on purpose: these feeds turn over constantly and a faster
-# poll buys nothing but load -- a role posted four minutes ago is not news.
-JOB_BOARDS: list[Seed] = [
+# First-person discussion about working in the US -- the "feedback" half. Same
+# constraint as the AI-training voice: Reddit is robots-blocked and rate-limited,
+# so Hacker News via hnrss is the reachable option. Probed 2026-08-24: "return
+# to office" holds as a phrase and returns the real thing ("Return-to-office
+# mandates are killing workplace trust"), while "laid off" and "job market"
+# do not -- hnrss returned rocket launches and a menu-bar app for those.
+WORK_VOICE: list[Seed] = [
     _s(
-        "weworkremotely.com",
-        "We Work Remotely",
-        "C",
-        ["https://weworkremotely.com/remote-jobs.rss"],
-        authority=0.6,
-    ),
-    _s(
-        "remotive.com",
-        "Remotive",
-        "C",
-        ["https://remotive.com/remote-jobs/feed"],
+        "hnrss.org",
+        "Hacker News",
+        "B",
+        ["https://hnrss.org/newest?q=%22return+to+office%22&count=25"],
         authority=0.55,
     ),
-    _s(
-        "himalayas.app",
-        "Himalayas",
-        "C",
-        ["https://himalayas.app/jobs/rss"],
-        authority=0.5,
-    ),
 ]
-
 
 # The contributor voice around AI-training work -- people doing RLHF, data
 # annotation and coding evaluation, and what it pays. That discourse lives on
