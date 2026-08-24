@@ -260,3 +260,99 @@ TECH: list[Seed] = [
         authority=0.65,
     ),
 ]
+
+
+# Remote work and the US job market. Two different kinds of source, kept
+# apart because they behave differently downstream: WORK_TREND publishes
+# articles (which group, summarise and answer questions like any other news),
+# while JOB_BOARDS publish listings -- one item per open role, high volume,
+# and nothing to "cluster" in the way a story clusters.
+#
+# Probed 2026-08-24 before adding. remote.co and flexjobs.com time out,
+# remoteok.com 404s, and remoterocketship/builtin/shrm/wsj return 403 or 404 --
+# all deliberately left out rather than added as endpoints that would park
+# themselves after ten failures.
+WORK_TREND: list[Seed] = [
+    _s(
+        "hiringlab.org",
+        "Indeed Hiring Lab",
+        "B",
+        ["https://www.hiringlab.org/feed/"],
+        # Indeed's own economists, publishing against Indeed's posting data --
+        # the closest thing to a primary source for US hiring trends.
+        authority=0.8,
+    ),
+    _s(
+        "worklife.news",
+        "WorkLife",
+        "B",
+        ["https://www.worklife.news/feed/"],
+        authority=0.6,
+    ),
+    _s(
+        "hrdive.com",
+        "HR Dive",
+        "B",
+        ["https://www.hrdive.com/feeds/news/"],
+        authority=0.65,
+    ),
+    _s(
+        "hrexecutive.com",
+        "HR Executive",
+        "C",
+        ["https://hrexecutive.com/feed/"],
+        authority=0.55,
+    ),
+]
+
+# Listings. Tier C on purpose: these feeds turn over constantly and a faster
+# poll buys nothing but load -- a role posted four minutes ago is not news.
+JOB_BOARDS: list[Seed] = [
+    _s(
+        "weworkremotely.com",
+        "We Work Remotely",
+        "C",
+        ["https://weworkremotely.com/remote-jobs.rss"],
+        authority=0.6,
+    ),
+    _s(
+        "remotive.com",
+        "Remotive",
+        "C",
+        ["https://remotive.com/remote-jobs/feed"],
+        authority=0.55,
+    ),
+    _s(
+        "himalayas.app",
+        "Himalayas",
+        "C",
+        ["https://himalayas.app/jobs/rss"],
+        authority=0.5,
+    ),
+]
+
+
+# The contributor voice around AI-training work -- people doing RLHF, data
+# annotation and coding evaluation, and what it pays. That discourse lives on
+# Reddit and in forums, neither of which is reachable: Reddit rate-limits its
+# RSS (429) AND its robots.txt blocks all crawlers, and the read stage obeys
+# robots by production invariant. Hacker News is permissive, and hnrss.org
+# exposes it as query feeds.
+#
+# Query terms chosen by precision, probed 2026-08-24. "data annotation" and
+# "Mercor" return the real thing; `"Surge AI"` and `"Scale AI"` were dropped
+# because hnrss does not enforce the phrase and they return "debt surge" and
+# "at scale" instead.
+AI_TRAINING_VOICE: list[Seed] = [
+    _s(
+        "hnrss.org",
+        "Hacker News",
+        "B",
+        [
+            "https://hnrss.org/newest?q=%22data+annotation%22&count=25",
+            "https://hnrss.org/newest?q=Mercor&count=25",
+            "https://hnrss.org/newest?q=RLHF&count=25",
+        ],
+        authority=0.55,
+    ),
+]

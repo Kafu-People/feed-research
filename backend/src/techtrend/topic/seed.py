@@ -163,4 +163,108 @@ TOPICS: list[SeedTopic] = [
         "exclude": [],
         "entities": [],
     },
+    {
+        # Trend and analysis about work and the US labour market. Ordinary
+        # articles: these group, summarise and answer questions like any story.
+        "title": "Remote work & US job market",
+        "must": [
+            "remote work",
+            "return to office",
+            "job market",
+            "labor market",
+            "labour market",
+            "hiring",
+            "layoffs",
+            "unemployment",
+            "job postings",
+            "workforce",
+            "hybrid work",
+            "four-day week",
+        ],
+        "should": [
+            "remote",
+            "employment",
+            "recruiting",
+            "talent",
+            "wages",
+            "salary",
+            "employees",
+            "office",
+            "workers",
+        ],
+        "exclude": [],
+        "entities": [],
+    },
+    {
+        # Open positions from the remote job boards.
+        #
+        # NOTE: the matcher reads title + description ONLY, never the body.
+        # Board descriptions are boilerplate ("X is hiring a remote Y to join
+        # their remote Z team") -- they always contain "remote" and never
+        # contain the country or the hybrid caveat that would disqualify a
+        # role. So `exclude` fires only on the rare listing that says "hybrid"
+        # in its title. Measured, not assumed: see the precision figures in the
+        # commit message.
+        "title": "Fully remote jobs",
+        "must": ["remote"],
+        "should": [
+            "united states",
+            "usa",
+            "americas",
+            "engineer",
+            "developer",
+            "designer",
+            "manager",
+        ],
+        "exclude": ["hybrid", "on-site", "onsite", "in-office"],
+        "entities": [],
+    },
+    {
+        # The people doing AI-training work, and what it pays -- distinct from
+        # topic 13, which is AI training as a technical/industry story. This is
+        # the contributor side: who is hiring annotators and evaluators, what
+        # the hourly rates are, what the work is actually like.
+        #
+        # "Appen" and "Micro1" are safe as must-terms despite looking like
+        # substrings: the matcher uses word-boundary matching, so "appen" does
+        # not fire on "happened".
+        "title": "AI training work & pay",
+        # RLHF and "annotator" were must-terms in the first cut and pulled in
+        # ML research -- "A Scalable RLHF Trainer", "Replacing RLHF with
+        # Entropic Loss". That is topic 3's subject, not this one. They are
+        # `should` now: they raise a score that a work-term already qualified.
+        "must": [
+            "data annotation",
+            "AI trainer",
+            "AI training job",
+            "AI training work",
+            "Mercor",
+            "DataAnnotation",
+            "Surge AI",
+            "Scale AI",
+            "Handshake AI",
+            "Micro1",
+            "Toloka",
+            "Appen",
+            "Mechanical Turk",
+        ],
+        "should": [
+            "hourly rate",
+            "per hour",
+            "pay",
+            "earn",
+            "salary",
+            "contributor",
+            "freelance",
+            "gig",
+            "contractor",
+            "evaluator",
+            "annotator",
+            "RLHF",
+            "coding",
+            "expert",
+        ],
+        "exclude": [],
+        "entities": [],
+    },
 ]
