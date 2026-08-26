@@ -14,6 +14,33 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
 
+# Never delivered, on any surface. A module constant rather than an inline
+# default so tests and the cleanup tooling can import the same list.
+DEFAULT_BLOCK_TERMS: tuple[str, ...] = (
+    "israel",
+    "israels",
+    "israeli",
+    "israelis",
+    "idf",
+    "gaza",
+    "gazan",
+    "gazans",
+    "jerusalem",
+    "tel aviv",
+    "west bank",
+    "knesset",
+    "netanyahu",
+    "mossad",
+    "shin bet",
+    "zionist",
+    "zionism",
+    "hamas",
+    "hezbollah",
+    "haaretz",
+    "unit 8200",
+    "nso group",
+)
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -93,6 +120,18 @@ class Settings(BaseSettings):
     breaking_alerts_per_day: int = 2
     # NOTE: there is deliberately no `dashboard_min_cards`. Invariant #10 --
     # never pad a short day -- is enforced by the absence of a floor.
+
+    # --- global content block --------------------------------------------
+    # A hard, corpus-wide gate: any story whose title, publisher description or
+    # extracted entities hit one of these terms is dropped at match time and
+    # again at notify time. This is NOT a topic `exclude` -- those are per
+    # topic, and a topic added tomorrow would not inherit them. This one
+    # applies to every topic, every feed and every channel, which is the point.
+    #
+    # Word-boundary matched on normalised text, so "israel" does not match
+    # "israeli" -- variants are listed explicitly. Override wholesale in .env
+    # with TT_BLOCK_TERMS='["..."]'; an empty list disables the gate.
+    block_terms: list[str] = Field(default_factory=lambda: list(DEFAULT_BLOCK_TERMS))
 
     # --- slack delivery --------------------------------------------------
     # Bot token (xoxb-, scope chat:write) + the channel it posts into. Both

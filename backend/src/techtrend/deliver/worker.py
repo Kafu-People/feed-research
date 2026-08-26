@@ -16,10 +16,12 @@ from techtrend.deliver.slack import SlackClient, followup_text, story_blocks, to
 from techtrend.platform import blobs, queue, telemetry
 from techtrend.platform.config import settings
 from techtrend.platform.db import session_scope
+from techtrend.topic.match import blocked, searchable
 
 # Invariant #3: a publisher opt-out gates serving, and Slack is serving.
 _LOAD = text("""
-    SELECT st.id, st.source_count, a.title, a.url, a.published_at, a.text_key, s.name AS site
+    SELECT st.id, st.source_count, a.title, a.url, a.published_at, a.text_key,
+           a.description, a.entities, s.name AS site
       FROM stories st
       JOIN articles a ON a.id = st.display_article_id
       JOIN sites s ON s.id = a.site_id
@@ -94,6 +96,15 @@ async def run(job: queue.Job) -> None:
             )
         ).all()
         existing = (await sess.execute(_EXISTING, {"id": story_id, "ch": channel})).one_or_none()
+
+    # The global block, re-checked at the last possible moment. The match
+    # stage already drops these, but a story matched before a term was added
+    # to the list still has its `matches` rows -- and this is the gate that
+    # actually decides what gets posted, so it is the one that must hold.
+    story_text = searchable(row.title, row.description, list(row.entities or []))
+    if hit := blocked(story_text, s.block_terms):
+        telemetry.log.info("notify.blocked", story_id=story_id, term=hit)
+        return
 
     # Filtered here rather than in SQL: the bar is per topic, and a CASE
     # expression over a settings dict would be worse than a list comprehension.

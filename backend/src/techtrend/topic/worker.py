@@ -18,7 +18,7 @@ from sqlalchemy import text
 from techtrend.platform import queue, telemetry
 from techtrend.platform.config import settings
 from techtrend.platform.db import session_scope
-from techtrend.topic.match import StoryText, evaluate, searchable
+from techtrend.topic.match import StoryText, blocked, evaluate, searchable
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -94,6 +94,14 @@ async def run(job: queue.Job) -> None:
 
     st = searchable(row.title, row.description, list(row.entities or []))
     story = StoryText(text=st.text, embedding=_parse_vec(row.embedding))
+
+    # The global veto, ahead of recall: a blocked story writes no `matches`
+    # rows at all, so it cannot reach a feed, a dashboard or a channel. The
+    # notify stage re-checks anyway, for stories matched before a term was
+    # added to the list.
+    if hit := blocked(story, settings().block_terms):
+        telemetry.log.info("match.blocked", story_id=story_id, term=hit)
+        return
 
     async with session_scope() as s:
         by_term = {r[0] for r in (await s.execute(_BY_TERM, {"tokens": _tokens(st.text)})).all()}
@@ -184,15 +192,19 @@ async def _backfill_topic(topic_id: int) -> None:
 
     rows = []
     topic_vec = _parse_vec(t.embedding)
+    block = settings().block_terms
     for r in stories:
         st = searchable(r.title, r.description, list(r.entities or []))
+        story = StoryText(text=st.text, embedding=_parse_vec(r.embedding))
+        if blocked(story, block):
+            continue
         score, matched_by = evaluate(
             must=list(t.must or []),
             should=list(t.should or []),
             exclude=list(t.exclude or []),
             entities=list(t.entities or []),
             topic_embedding=topic_vec,
-            story=StoryText(text=st.text, embedding=_parse_vec(r.embedding)),
+            story=story,
         )
         if score >= t.floor:
             rows.append(

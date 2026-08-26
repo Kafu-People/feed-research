@@ -41,6 +41,21 @@ def _hit(term: str, text: str) -> bool:
     return f" {t} " in text or bool(re.search(rf"(?<![a-z0-9]){re.escape(t)}(?![a-z0-9])", text))
 
 
+def blocked(story: StoryText, terms: list[str] | tuple[str, ...]) -> str | None:
+    """The first blocklist term this story hits, or None.
+
+    Separate from a topic's own `exclude` on purpose. `exclude` is something a
+    subscriber chose for one topic; this is a corpus-wide veto that a topic
+    cannot opt out of and a new topic inherits automatically. Returning the
+    term rather than a bool is what makes the skip loggable -- "blocked" with
+    no reason is impossible to tune later.
+    """
+    for t in terms:
+        if _hit(t, story.text):
+            return normalise_term(t)
+    return None
+
+
 def cosine(a: list[float], b: list[float]) -> float:
     dot = sum(x * y for x, y in zip(a, b, strict=True))
     na = math.sqrt(sum(x * x for x in a)) or 1.0
