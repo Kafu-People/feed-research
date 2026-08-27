@@ -94,13 +94,6 @@ TECH: list[Seed] = [
         authority=0.9,
     ),
     _s(
-        "bbc.co.uk",
-        "BBC Technology",
-        "A",
-        ["https://feeds.bbci.co.uk/news/technology/rss.xml"],
-        authority=0.9,
-    ),
-    _s(
         "theguardian.com",
         "Guardian Technology",
         "A",

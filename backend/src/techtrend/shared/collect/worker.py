@@ -13,6 +13,7 @@ from typing import Any
 from sqlalchemy import text
 
 from techtrend.platform import queue, telemetry
+from techtrend.platform.config import settings, site_blocked
 from techtrend.platform.db import session_scope
 from techtrend.shared.collect import schedule
 from techtrend.shared.collect.fetcher import FetchResult, PoliteFetcher, RobotsDisallowed
@@ -40,6 +41,7 @@ _SWEEP = text("""
      WHERE e.next_check_at <= now()
        AND e.failure_streak < :parked
        AND s.opt_out_at IS NULL
+       AND NOT (s.domain = ANY(:blocked))
      ORDER BY e.next_check_at
      LIMIT :batch
     ON CONFLICT (stage, key) DO NOTHING
@@ -47,7 +49,7 @@ _SWEEP = text("""
 
 _LOAD = text("""
     SELECT e.id, e.url, e.kind, e.etag, e.last_modified, e.interval_s, e.quiet_streak,
-           e.failure_streak, s.id AS site_id, s.tier, s.opt_out_at
+           e.failure_streak, s.id AS site_id, s.tier, s.opt_out_at, s.domain
       FROM endpoints e
       JOIN sites s ON s.id = e.site_id
      WHERE e.id = :id
@@ -69,7 +71,14 @@ _BUMP = text("""
 async def sweep_due(batch: int = 200) -> int:
     """Enqueue a collect job for every due endpoint. Safe to call from N workers."""
     async with session_scope() as s:
-        result = await s.execute(_SWEEP, {"batch": batch, "parked": schedule.PARKED_FAILURE_STREAK})
+        result = await s.execute(
+            _SWEEP,
+            {
+                "batch": batch,
+                "parked": schedule.PARKED_FAILURE_STREAK,
+                "blocked": list(settings().blocked_sites),
+            },
+        )
         return int(getattr(result, "rowcount", 0) or 0)
 
 
@@ -84,6 +93,17 @@ async def run(job: queue.Job) -> None:
         ep = (await s.execute(_LOAD, {"id": endpoint_id})).one_or_none()
     if ep is None:
         return  # endpoint deleted since the sweep
+
+    if ban := site_blocked(ep.domain, settings().blocked_sites):
+        # A banned publisher, parked so the sweep stops paying for it even if
+        # the endpoint row outlives the ban.
+        async with session_scope() as s:
+            await s.execute(
+                text("UPDATE endpoints SET failure_streak = :parked WHERE id = :id"),
+                {"id": ep.id, "parked": schedule.PARKED_FAILURE_STREAK},
+            )
+        telemetry.log.info("collect.site_blocked", endpoint_id=ep.id, domain=ep.domain, ban=ban)
+        return
 
     if ep.opt_out_at is not None:
         # Invariant #3: publisher opt-out gates collection at the top.

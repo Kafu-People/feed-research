@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import text
 
 from techtrend.platform import queue, telemetry
-from techtrend.platform.config import settings
+from techtrend.platform.config import settings, site_blocked
 from techtrend.platform.db import session_scope
 from techtrend.topic.match import StoryText, blocked, evaluate, searchable
 
@@ -24,9 +24,11 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 _LOAD_STORY = text("""
-    SELECT st.id, st.source_count, a.title, a.description, a.entities,
+    SELECT st.id, st.source_count, a.title, a.description, a.entities, si.domain,
            CAST(st.embedding AS text) AS embedding
-      FROM stories st JOIN articles a ON a.id = st.display_article_id
+      FROM stories st
+      JOIN articles a ON a.id = st.display_article_id
+      JOIN sites si ON si.id = a.site_id
      WHERE st.id = :id
 """)
 
@@ -77,8 +79,11 @@ def _parse_vec(raw: str | None) -> list[float] | None:
 _RECENT_STORIES = text("""
     SELECT st.id, a.title, a.description, a.entities,
            CAST(st.embedding AS text) AS embedding
-      FROM stories st JOIN articles a ON a.id = st.display_article_id
+      FROM stories st
+      JOIN articles a ON a.id = st.display_article_id
+      JOIN sites si ON si.id = a.site_id
      WHERE a.published_at > now() - make_interval(days => 30)
+       AND NOT (si.domain = ANY(:blocked))
 """)
 
 
@@ -94,6 +99,13 @@ async def run(job: queue.Job) -> None:
 
     st = searchable(row.title, row.description, list(row.entities or []))
     story = StoryText(text=st.text, embedding=_parse_vec(row.embedding))
+
+    # A banned publisher never reaches a topic. Checked on the DISPLAY article,
+    # because that is the one whose headline and link get shown -- a banned
+    # outlet merely corroborating someone else's scoop is not what was banned.
+    if ban := site_blocked(row.domain, settings().blocked_sites):
+        telemetry.log.info("match.site_blocked", story_id=story_id, domain=row.domain, ban=ban)
+        return
 
     # The global veto, ahead of recall: a blocked story writes no `matches`
     # rows at all, so it cannot reach a feed, a dashboard or a channel. The
@@ -188,7 +200,9 @@ async def _backfill_topic(topic_id: int) -> None:
         t = (await s.execute(_LOAD_TOPICS, {"ids": [topic_id]})).one_or_none()
         if t is None:
             return
-        stories = (await s.execute(_RECENT_STORIES)).all()
+        stories = (
+            await s.execute(_RECENT_STORIES, {"blocked": list(settings().blocked_sites)})
+        ).all()
 
     rows = []
     topic_vec = _parse_vec(t.embedding)

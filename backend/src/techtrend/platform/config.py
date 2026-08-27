@@ -41,6 +41,14 @@ DEFAULT_BLOCK_TERMS: tuple[str, ...] = (
     "nso group",
 )
 
+# Publishers we do not carry. Distinct from `sites.opt_out_at`, which records
+# that a PUBLISHER asked to be removed (invariant #3) -- this records that the
+# OPERATOR banned them. Conflating the two would put words in a publisher's
+# mouth and make "why is this site off?" unanswerable.
+#
+# Matched on the registrable domain, subdomains included.
+DEFAULT_BLOCK_SITES: tuple[str, ...] = ("bbc.co.uk",)
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -132,6 +140,10 @@ class Settings(BaseSettings):
     # "israeli" -- variants are listed explicitly. Override wholesale in .env
     # with TT_BLOCK_TERMS='["..."]'; an empty list disables the gate.
     block_terms: list[str] = Field(default_factory=lambda: list(DEFAULT_BLOCK_TERMS))
+    # Banned publishers. Gates collection at the sweep, matching, and posting.
+    # Removing a domain here is not enough to bring a site back -- its seed
+    # entry has to exist too. Override with TT_BLOCKED_SITES='["..."]'.
+    blocked_sites: list[str] = Field(default_factory=lambda: list(DEFAULT_BLOCK_SITES))
 
     # --- slack delivery --------------------------------------------------
     # Bot token (xoxb-, scope chat:write) + the channel it posts into. Both
@@ -185,6 +197,23 @@ class Settings(BaseSettings):
     def sync_database_url(self) -> str:
         """Alembic runs synchronously; swap asyncpg for psycopg."""
         return self.database_url.replace("+asyncpg", "+psycopg")
+
+
+def site_blocked(domain: str | None, blocked: list[str] | tuple[str, ...]) -> str | None:
+    """The banned domain this site falls under, or None.
+
+    Suffix-aware, so banning "bbc.co.uk" also bans "news.bbc.co.uk" -- a ban a
+    subdomain walks around is not a ban. Returns the matched entry rather than
+    a bool so the skip can say which rule fired.
+    """
+    if not domain:
+        return None
+    d = domain.strip().lower().removeprefix("www.")
+    for b in blocked:
+        bb = b.strip().lower().removeprefix("www.")
+        if bb and (d == bb or d.endswith(f".{bb}")):
+            return bb
+    return None
 
 
 @lru_cache

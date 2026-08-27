@@ -3,7 +3,7 @@ excluded story still returns 0.0 -- gates are gates, not penalties."""
 
 from __future__ import annotations
 
-from techtrend.platform.config import DEFAULT_BLOCK_TERMS
+from techtrend.platform.config import DEFAULT_BLOCK_SITES, DEFAULT_BLOCK_TERMS, site_blocked
 from techtrend.topic.match import StoryText, blocked, evaluate, searchable
 
 
@@ -132,3 +132,41 @@ def test_ordinary_ai_news_passes_the_gate() -> None:
 def test_empty_blocklist_disables_the_gate() -> None:
     st = searchable("Israel unveils a new AI defence system", None, [])
     assert blocked(StoryText(text=st.text, embedding=None), []) is None
+
+
+# ------------------------------------------------------ the publisher ban
+
+
+def test_site_ban_matches_the_exact_domain() -> None:
+    assert site_blocked("bbc.co.uk", DEFAULT_BLOCK_SITES) == "bbc.co.uk"
+
+
+def test_site_ban_covers_subdomains() -> None:
+    """A ban a subdomain walks around is not a ban."""
+    assert site_blocked("news.bbc.co.uk", DEFAULT_BLOCK_SITES) == "bbc.co.uk"
+    assert site_blocked("feeds.bbci.co.uk", DEFAULT_BLOCK_SITES) is None  # different domain
+
+
+def test_site_ban_ignores_www_and_case() -> None:
+    assert site_blocked("WWW.BBC.CO.UK", DEFAULT_BLOCK_SITES) == "bbc.co.uk"
+
+
+def test_site_ban_does_not_match_on_suffix_alone() -> None:
+    """'notbbc.co.uk' ends with the ban string but is a different publisher."""
+    assert site_blocked("notbbc.co.uk", DEFAULT_BLOCK_SITES) is None
+
+
+def test_site_ban_tolerates_missing_domain() -> None:
+    assert site_blocked(None, DEFAULT_BLOCK_SITES) is None
+    assert site_blocked("", DEFAULT_BLOCK_SITES) is None
+
+
+def test_empty_site_ban_list_allows_everything() -> None:
+    assert site_blocked("bbc.co.uk", []) is None
+
+
+def test_banned_publisher_is_not_in_the_seed_list() -> None:
+    """The gate stops serving; removing the seed stops it coming back."""
+    from techtrend.shared.collect.seeds import TECH
+
+    assert not [s for s in TECH if site_blocked(s["domain"], DEFAULT_BLOCK_SITES)]

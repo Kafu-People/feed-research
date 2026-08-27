@@ -14,14 +14,14 @@ from sqlalchemy import text
 from techtrend.ai.client import client as ai_client
 from techtrend.deliver.slack import SlackClient, followup_text, story_blocks, to_mrkdwn
 from techtrend.platform import blobs, queue, telemetry
-from techtrend.platform.config import settings
+from techtrend.platform.config import settings, site_blocked
 from techtrend.platform.db import session_scope
 from techtrend.topic.match import blocked, searchable
 
 # Invariant #3: a publisher opt-out gates serving, and Slack is serving.
 _LOAD = text("""
     SELECT st.id, st.source_count, a.title, a.url, a.published_at, a.text_key,
-           a.description, a.entities, s.name AS site
+           a.description, a.entities, s.name AS site, s.domain
       FROM stories st
       JOIN articles a ON a.id = st.display_article_id
       JOIN sites s ON s.id = a.site_id
@@ -96,6 +96,12 @@ async def run(job: queue.Job) -> None:
             )
         ).all()
         existing = (await sess.execute(_EXISTING, {"id": story_id, "ch": channel})).one_or_none()
+
+    # A banned publisher, re-checked at the post. Same reason as the term
+    # block below: stories matched before the ban still carry their rows.
+    if ban := site_blocked(row.domain, s.blocked_sites):
+        telemetry.log.info("notify.site_blocked", story_id=story_id, domain=row.domain, ban=ban)
+        return
 
     # The global block, re-checked at the last possible moment. The match
     # stage already drops these, but a story matched before a term was added
