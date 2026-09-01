@@ -39,6 +39,16 @@ DEFAULT_BLOCK_TERMS: tuple[str, ...] = (
     "haaretz",
     "unit 8200",
     "nso group",
+    # Trump, banned 2026-09-01. "trumps" carries the possessive, because
+    # normalise_term strips the apostrophe from "Trump's". Checked against
+    # 15,275 live articles first: all 35 "trumps" hits were the name, none
+    # were the verb ("speed trumps accuracy"), so the term is safe here.
+    "trump",
+    "trumps",
+    "trumpism",
+    "maga",
+    "truth social",
+    "mar a lago",
 )
 
 # Publishers we do not carry. Distinct from `sites.opt_out_at`, which records

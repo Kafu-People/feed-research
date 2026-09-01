@@ -170,3 +170,14 @@ def test_banned_publisher_is_not_in_the_seed_list() -> None:
     from techtrend.shared.collect.seeds import TECH
 
     assert not [s for s in TECH if site_blocked(s["domain"], DEFAULT_BLOCK_SITES)]
+
+
+def test_block_catches_the_possessive_form() -> None:
+    """normalise_term strips the apostrophe, so "Trump's" arrives as "trumps"
+    and the bare "trump" term would not match it on a word boundary."""
+    assert _blocked("Trump's AI framework is so bad they won't show it") == "trumps"
+
+
+def test_block_catches_trump_adjacent_brands() -> None:
+    assert _blocked("Trump Media posts a $238m quarterly loss") == "trump"
+    assert _blocked("Sued over selling Truth Social API access") == "truth social"
