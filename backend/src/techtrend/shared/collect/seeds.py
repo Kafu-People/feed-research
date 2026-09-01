@@ -298,43 +298,111 @@ WORK_TREND: list[Seed] = [
     ),
 ]
 
-# First-person discussion about working in the US -- the "feedback" half. Same
-# constraint as the AI-training voice: Reddit is robots-blocked and rate-limited,
-# so Hacker News via hnrss is the reachable option. Probed 2026-08-24: "return
-# to office" holds as a phrase and returns the real thing ("Return-to-office
-# mandates are killing workplace trust"), while "laid off" and "job market"
-# do not -- hnrss returned rocket launches and a menu-bar app for those.
-WORK_VOICE: list[Seed] = [
-    _s(
-        "hnrss.org",
-        "Hacker News",
-        "B",
-        ["https://hnrss.org/newest?q=%22return+to+office%22&count=25"],
-        authority=0.55,
-    ),
-]
-
-# The contributor voice around AI-training work -- people doing RLHF, data
-# annotation and coding evaluation, and what it pays. That discourse lives on
-# Reddit and in forums, neither of which is reachable: Reddit rate-limits its
-# RSS (429) AND its robots.txt blocks all crawlers, and the read stage obeys
-# robots by production invariant. Hacker News is permissive, and hnrss.org
-# exposes it as query feeds.
+# Hacker News as the "feedback" half of the work topics -- first-person
+# discussion rather than reporting. Reddit is the natural home for this and is
+# unreachable: it rate-limits its RSS (429) AND its robots.txt blocks all
+# crawlers, which the read stage obeys by production invariant. hnrss.org
+# exposes HN as query feeds and is permissive.
 #
-# Query terms chosen by precision, probed 2026-08-24. "data annotation" and
-# "Mercor" return the real thing; `"Surge AI"` and `"Scale AI"` were dropped
-# because hnrss does not enforce the phrase and they return "debt surge" and
-# "at scale" instead.
-AI_TRAINING_VOICE: list[Seed] = [
+# ONE seed entry, many feeds. hnrss.org previously appeared as a separate seed
+# in two different groups; seed_sites dedupes sites by domain, so the seed
+# count and the row count disagreed by one and test_seed_sites_is_idempotent
+# failed. A site belongs to exactly one seed -- extra feeds go in this list.
+#
+# Query terms are chosen by PRECISION and probed before being added, because
+# hnrss does not enforce quoted phrases. Dropped after probing: `"Surge AI"`
+# and `"Scale AI"` (return "debt surge" and "at scale"), `"laid off"` and a
+# bare `"job market"` on its own (returned rocket launches and a menu-bar app),
+# and `"consulting rates"` (returned a rate-limiting library).
+HN_VOICE: list[Seed] = [
     _s(
         "hnrss.org",
         "Hacker News",
         "B",
         [
+            # return-to-office / US working conditions
+            "https://hnrss.org/newest?q=%22return+to+office%22&count=25",
+            # AI-training work and what it pays
             "https://hnrss.org/newest?q=%22data+annotation%22&count=25",
             "https://hnrss.org/newest?q=Mercor&count=25",
             "https://hnrss.org/newest?q=RLHF&count=25",
+            # the developer market and contracting -- probed 2026-09-01
+            "https://hnrss.org/newest?q=outsourcing&count=25",
+            "https://hnrss.org/newest?q=nearshore&count=25",
+            "https://hnrss.org/newest?q=%22junior+developers%22&count=25",
+            "https://hnrss.org/newest?q=freelancing&count=25",
         ],
         authority=0.55,
+    ),
+]
+
+# The software labour market as a business: who is hiring engineers, what
+# contract work pays, and how AI is changing both. Trade press plus the two
+# newsletters that actually report on engineering hiring rather than opining
+# about it.
+#
+# Probed 2026-09-01 with the production fetcher, so robots.txt and the real
+# User-Agent applied. Left out after probing: cio.com (robots-blocked),
+# staffingindustry.com and devinterrupted (403), shrm.org and getdx.com (404),
+# labsnews.com (200 but zero entries). Contxto was added, probed on real
+# output, and removed: 100 articles of Latin American fintech funding in mixed
+# Spanish and English -- it would have flooded "AI models & labs", which posts
+# to Slack, without serving this beat. Adding any of those would have created
+# an endpoint that parks itself after ten failures.
+DEV_MARKET: list[Seed] = [
+    _s(
+        "nearshoreamericas.com",
+        "Nearshore Americas",
+        "B",
+        ["https://nearshoreamericas.com/feed/"],
+        # The trade publication for this beat. Vendor-adjacent -- read its
+        # market-size claims as interested, its hiring reporting as useful.
+        authority=0.6,
+    ),
+    _s(
+        "newsletter.pragmaticengineer.com",
+        "The Pragmatic Engineer",
+        "B",
+        ["https://newsletter.pragmaticengineer.com/feed"],
+        # Reports engineering hiring from primary sources rather than repeating
+        # vendor reports -- the highest-authority source in this group.
+        authority=0.75,
+    ),
+    _s(
+        "leaddev.com",
+        "LeadDev",
+        "B",
+        ["https://leaddev.com/rss.xml"],
+        authority=0.6,
+    ),
+    _s(
+        "infoq.com",
+        "InfoQ",
+        "B",
+        ["https://feed.infoq.com/"],
+        authority=0.6,
+    ),
+    _s(
+        "refactoring.fm",
+        "Refactoring",
+        "C",
+        ["https://refactoring.fm/feed"],
+        authority=0.5,
+    ),
+    _s(
+        "sloanreview.mit.edu",
+        "MIT Sloan Management Review",
+        "B",
+        ["https://sloanreview.mit.edu/feed/"],
+        authority=0.7,
+    ),
+    _s(
+        "news.outsourceaccelerator.com",
+        "Outsource Accelerator",
+        "C",
+        ["https://news.outsourceaccelerator.com/feed/"],
+        # An outsourcing marketplace's own newsroom. Kept for coverage of a
+        # beat nobody neutral reports on, at low authority for that reason.
+        authority=0.45,
     ),
 ]

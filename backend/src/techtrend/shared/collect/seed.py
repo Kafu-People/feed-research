@@ -10,7 +10,7 @@ from sqlalchemy import text
 
 from techtrend.platform.db import session_scope
 from techtrend.shared.collect.schedule import TIER_BASE_S
-from techtrend.shared.collect.seeds import AI_TRAINING_VOICE, TECH, WORK_TREND, WORK_VOICE
+from techtrend.shared.collect.seeds import DEV_MARKET, HN_VOICE, TECH, WORK_TREND
 
 _UPSERT_SITE = text("""
     INSERT INTO sites (domain, name, tier, authority, paywall)
@@ -31,7 +31,7 @@ _UPSERT_ENDPOINT = text("""
 async def seed_sites() -> dict[str, int]:
     sites = endpoints = 0
     async with session_scope() as s:
-        for seed in (*TECH, *WORK_TREND, *WORK_VOICE, *AI_TRAINING_VOICE):
+        for seed in (*TECH, *WORK_TREND, *HN_VOICE, *DEV_MARKET):
             site_id = (
                 await s.execute(
                     _UPSERT_SITE,

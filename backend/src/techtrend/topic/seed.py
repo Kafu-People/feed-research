@@ -253,4 +253,101 @@ TOPICS: list[SeedTopic] = [
         "exclude": [],
         "entities": [],
     },
+    {
+        # The developer labour market itself. Terms are deliberately SPECIFIC:
+        # probed against 15k live articles, broad words ("talent", "career",
+        # "jobs", "contractor") match mostly on the publisher's description of
+        # an unrelated story, so they cost far more precision than they buy.
+        #
+        # `entities` is the AND gate -- a story must carry a job word AND a
+        # software word. Without it, "U.S. BLS revision erases thousands of
+        # jobs" lands here instead of in "Remote work & US job market" (18).
+        "title": "Dev job market & the AI shakeout",
+        "must": [
+            "hiring",
+            "rehiring",
+            "layoffs",
+            "laid off",
+            "job market",
+            "jobs market",
+            "job seekers",
+            "hiring managers",
+            "junior engineer",
+            "junior engineers",
+            "junior developer",
+            "junior developers",
+            "entry-level",
+            "headcount",
+            "hiring freeze",
+        ],
+        "should": [
+            "AI",
+            "junior",
+            "senior",
+            "graduate",
+            "salary",
+            "demand",
+            "automation",
+            "career",
+            "team",
+            "productivity",
+        ],
+        "exclude": [],
+        "entities": [
+            "engineer",
+            "engineers",
+            "developer",
+            "developers",
+            "software",
+            "engineering",
+            "programmer",
+            "programmers",
+            "coding",
+            "IT",
+        ],
+    },
+    {
+        # The supply side: software work sold across borders. These must-terms
+        # are unambiguous enough not to need an entity gate -- "nearshore" and
+        # "BPO" mean one thing. Bare "offshore" is NOT here: it matched wind
+        # farms and drilling, so the phrase forms are used and the exclude
+        # catches the rest.
+        "title": "Outsourcing, nearshore & dev agencies",
+        "must": [
+            "nearshore",
+            "nearshoring",
+            "outsourcing",
+            "outsourced",
+            "offshoring",
+            "offshore development",
+            "offshore delivery",
+            "BPO",
+            "business process outsourcing",
+            "call center",
+            "call centre",
+            "staff augmentation",
+            "IT services",
+            "delivery center",
+            "delivery hub",
+            "freelancing",
+            "software agency",
+            "dev shop",
+        ],
+        "should": [
+            "AI",
+            "Latin America",
+            "LatAm",
+            "Brazil",
+            "Mexico",
+            "India",
+            "Philippines",
+            "client",
+            "hourly rate",
+            "contract",
+            "talent",
+            "margin",
+        ],
+        "exclude": ["offshore wind", "offshore drilling", "offshore oil"],
+        "entities": [],
+    },
 ]
