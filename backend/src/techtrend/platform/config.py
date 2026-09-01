@@ -93,10 +93,18 @@ class Settings(BaseSettings):
     # Distill is expansion, not judgment, and the user is WAITING (~2s budget).
     # Haiku is fast and cheap and good at it; judging quality stays on ai_model.
     ai_distill_model: str = "claude-haiku-4-5"
-    # Summarising is rewriting, not judgment, and it runs once per posted
-    # story. Haiku is fast, cheap and good at it -- measured 2026-08-20 at
-    # ~830 input / ~110 output tokens per article, about $1.20/month at 28/day.
+    # Summarising runs once per posted story, and it is the most-read output
+    # the system produces -- every reader in the channel sees it.
+    # Measured 2026-09-01 on live articles against the student-readability
+    # rules in summarize.md: Opus follows them best (mean sentence 17.7 words
+    # vs Haiku's 24.1) but costs $14.66/month against Haiku's $2.13 at 28
+    # summaries/day. Haiku chosen deliberately -- the gap is real but not worth
+    # 7x. Switch by changing this one line; `_effort_kwargs` and
+    # `_summary_max_tokens` already handle both model families.
     ai_summary_model: str = "claude-haiku-4-5"
+    # Rewriting, not reasoning: the thinking budget buys nothing here, and on
+    # Opus it is on by default until told otherwise.
+    ai_summary_effort: Effort = "low"
     # Answering is reasoning, not rewriting: the reader is asking something the
     # article does not state outright, and the failure we care about -- a
     # confident answer from memory rather than from the text -- is what a

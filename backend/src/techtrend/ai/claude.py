@@ -36,6 +36,30 @@ class Refused(Exception):
         self.category = category
 
 
+def _is_haiku(model: str) -> bool:
+    return "haiku" in model
+
+
+def _effort_kwargs(model: str, effort: str) -> dict[str, object]:
+    """`output_config.effort` is a 400 on Haiku 4.5 and required on Opus 5.
+
+    Opus 5 has extended thinking ON by default. Sending no effort setting does
+    not disable it -- it just leaves it uncontrolled, which for a three-sentence
+    rewrite means paying for reasoning tokens that change nothing.
+    """
+    return {} if _is_haiku(model) else {"output_config": {"effort": effort}}
+
+
+def _summary_max_tokens(model: str) -> int:
+    """Haiku writes straight into the response; a thinking model does not.
+
+    On Opus, max_tokens caps thinking AND output together. 400 was ample for
+    Haiku and would be swallowed whole by thinking on Opus, returning an empty
+    content array that reads to the caller as a model that declined.
+    """
+    return 400 if _is_haiku(model) else 3000
+
+
 class ClaudeClient:
     def __init__(self) -> None:
         # Credentials resolve from the environment (ANTHROPIC_API_KEY, or an
@@ -69,7 +93,7 @@ class ClaudeClient:
         if resp.stop_reason == "refusal":
             cat = getattr(resp.stop_details, "category", None) if resp.stop_details else None
             raise Refused(cat)
-        _observe("judge", resp.usage, model=s.ai_model)
+        _observe("judge", resp.usage, model=s.ai_model, effort=s.ai_judge_effort)
         return cast("JudgeResult", resp.parsed_output)
 
     async def answer(self, question: str, title: str, body: str, thread: str) -> str:
@@ -108,31 +132,33 @@ class ClaudeClient:
         if resp.stop_reason == "refusal":
             cat = getattr(resp.stop_details, "category", None) if resp.stop_details else None
             raise Refused(cat)
-        _observe("answer", resp.usage, model=s.ai_answer_model)
+        _observe("answer", resp.usage, model=s.ai_answer_model, effort=s.ai_answer_effort)
         text = "".join(b.text for b in resp.content if b.type == "text").strip()
         return text or "I could not produce an answer for that one."
 
     async def summarize(self, title: str, body: str) -> str | None:
         """Plain-language summary for a chat channel. None when unsummarisable.
 
-        No `output_config.effort` and no thinking: both error on Haiku 4.5, and
-        a 2-sentence rewrite needs neither. No `cache_control` either -- this
-        system prompt is well under Haiku 4.5's 4096-token cache minimum, so a
-        breakpoint here would never produce a hit.
+        No `cache_control`: this system prompt is under Haiku 4.5's 4096-token
+        cache minimum, so a breakpoint here would never produce a hit.
+
+        The model is configurable and the two families need different calls --
+        see `_effort_kwargs` and `_summary_max_tokens` for why.
         """
         s = settings()
         resp = await self._c.messages.create(
             model=s.ai_summary_model,
-            max_tokens=400,
+            max_tokens=_summary_max_tokens(s.ai_summary_model),
             system=[{"type": "text", "text": SUMMARIZE_SYSTEM}],
             messages=[{"role": "user", "content": f"{title}\n\n{body}"}],
+            **_effort_kwargs(s.ai_summary_model, s.ai_summary_effort),
         )
         # Check stop_reason BEFORE reading content: a refusal is HTTP 200 with
         # an empty or partial content array.
         if resp.stop_reason == "refusal":
             cat = getattr(resp.stop_details, "category", None) if resp.stop_details else None
             raise Refused(cat)
-        _observe("summarize", resp.usage, model=s.ai_summary_model)
+        _observe("summarize", resp.usage, model=s.ai_summary_model, effort=s.ai_summary_effort)
 
         text = "".join(b.text for b in resp.content if b.type == "text").strip()
         # The prompt's own escape hatch for boilerplate that survived extraction.
@@ -159,7 +185,7 @@ class ClaudeClient:
         if resp.stop_reason == "refusal":
             cat = getattr(resp.stop_details, "category", None) if resp.stop_details else None
             raise Refused(cat)
-        _observe("digest", resp.usage, model=s.ai_digest_model)
+        _observe("digest", resp.usage, model=s.ai_digest_model, effort=s.ai_digest_effort)
         return "".join(b.text for b in resp.content if b.type == "text").strip()
 
     async def distill(self, sentence: str) -> TopicDraft:
@@ -191,7 +217,7 @@ def _render_judge(title: str, body: str, kw: dict[str, object]) -> str:
     )
 
 
-def _observe(stage: str, usage: object, *, model: str = MODEL) -> None:
+def _observe(stage: str, usage: object, *, model: str = MODEL, effort: str = "-") -> None:
     for field in (
         "input_tokens",
         "output_tokens",
@@ -206,6 +232,8 @@ def _observe(stage: str, usage: object, *, model: str = MODEL) -> None:
         "ai.call",
         stage=stage,
         model=model,
-        effort=settings().ai_judge_effort,
+        # Was hardcoded to ai_judge_effort, so every stage logged the judge's
+        # setting -- which reads as a bug in whichever stage you are debugging.
+        effort=effort,
         cache_read=getattr(usage, "cache_read_input_tokens", 0),
     )
