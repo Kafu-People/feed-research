@@ -69,17 +69,25 @@ class SlackClient:
         text: str,
         blocks: list[dict[str, Any]] | None = None,
         thread_ts: str | None = None,
+        unfurl: bool = True,
     ) -> str:
         """Post one message; return its `ts`. `text` is the notification
         fallback and the accessible version, so it is never optional."""
-        # Unfurling ON by design: Slack renders the publisher's own preview
-        # (blurb, byline, image) from their og: tags. Our message therefore
-        # carries ONLY what the unfurl cannot know -- the link and the topics.
+        # Unfurl ON by default, and that default is load-bearing for a story
+        # card: Slack renders the publisher's own preview (blurb, byline,
+        # image) from their og: tags, so the card carries ONLY what the unfurl
+        # cannot know -- the link and the topics.
+        #
+        # Pass unfurl=False for a message whose links are Slack permalinks.
+        # Slack expands those into quoted copies of the linked message, so a
+        # digest of twenty links would bury its own text under five previews
+        # of stories the reader already scrolled past. The link is the point
+        # there; the preview is noise.
         body: dict[str, Any] = {
             "channel": channel,
             "text": text,
-            "unfurl_links": True,
-            "unfurl_media": True,
+            "unfurl_links": unfurl,
+            "unfurl_media": unfurl,
         }
         if blocks is not None:
             body["blocks"] = blocks

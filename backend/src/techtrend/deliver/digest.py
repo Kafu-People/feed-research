@@ -214,7 +214,7 @@ async def run(job: queue.Job) -> None:
     client = SlackClient()
     body = await linkify(to_mrkdwn(body), list(rows), client, channel)
     fallback, blocks = blocks_for(day, body, totals.n, totals.sites)
-    ts = await client.post(channel, fallback, blocks=blocks)
+    ts = await client.post(channel, fallback, blocks=blocks, unfurl=False)
     async with session_scope() as sess:
         await sess.execute(_RECORD, {"day": day, "ch": channel, "ts": ts, "n": totals.n})
     telemetry.log.info(

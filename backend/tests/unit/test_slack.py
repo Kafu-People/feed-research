@@ -122,6 +122,18 @@ async def test_unfurling_is_enabled_so_slack_renders_the_preview() -> None:
 
 @respx.mock
 @pytest.mark.asyncio
+async def test_unfurling_can_be_switched_off_per_message() -> None:
+    """The digest links to Slack permalinks, and Slack expands those into
+    quoted copies of the linked message -- which would bury the digest."""
+    route = respx.post(API).mock(return_value=httpx.Response(200, json={"ok": True, "ts": "1"}))
+    await SlackClient().post("#c", "hi", unfurl=False)
+    body = json.loads(route.calls.last.request.read())
+    assert body["unfurl_links"] is False
+    assert body["unfurl_media"] is False
+
+
+@respx.mock
+@pytest.mark.asyncio
 async def test_post_returns_ts_on_success() -> None:
     respx.post(API).mock(return_value=httpx.Response(200, json={"ok": True, "ts": "17.99"}))
     assert await SlackClient().post("#c", "hi") == "17.99"
