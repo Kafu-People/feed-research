@@ -17,6 +17,13 @@ from techtrend.platform.config import settings
 
 _POST = "https://slack.com/api/chat.postMessage"
 _REPLIES = "https://slack.com/api/conversations.replies"
+_LIST = "https://slack.com/api/conversations.list"
+_PERMALINK = "https://slack.com/api/chat.getPermalink"
+
+# chat.postMessage accepts "#name" or an id; chat.delete, conversations.replies
+# and chat.getPermalink all require the ID. Resolved once, then cached for the
+# process -- a channel id does not change under a running worker.
+_CHANNEL_IDS: dict[str, str] = {}
 
 # Retrying these never helps: the token, the scope or the channel is wrong, and
 # a human has to fix it. Dead-letter immediately rather than burn the queue.
@@ -34,6 +41,16 @@ _FATAL = frozenset(
         "invalid_blocks",
     }
 )
+
+
+def _raise_for(data: dict[str, Any]) -> None:
+    """Slack signals failure in a 200 body. Split it by the taxonomy above."""
+    if data.get("ok"):
+        return
+    err = str(data.get("error", "unknown"))
+    if err in _FATAL:
+        raise queue.FatalError(f"slack: {err}")
+    raise queue.RetryableError(f"slack: {err}")
 
 
 class SlackClient:
@@ -81,12 +98,41 @@ class SlackClient:
             raise queue.RetryableError(f"slack http {resp.status_code}")
 
         data = resp.json()
-        if not data.get("ok"):
-            err = str(data.get("error", "unknown"))
-            if err in _FATAL:
-                raise queue.FatalError(f"slack: {err}")
-            raise queue.RetryableError(f"slack: {err}")
+        _raise_for(data)
         return str(data["ts"])
+
+    async def channel_id(self, channel: str) -> str:
+        """Resolve "#name" to a channel id. Ids pass through untouched."""
+        if not channel.startswith("#"):
+            return channel
+        if hit := _CHANNEL_IDS.get(channel):
+            return hit
+        cursor = ""
+        async with httpx.AsyncClient(timeout=settings().slack_timeout_s) as c:
+            while True:
+                params = {"types": "public_channel", "limit": 1000, "exclude_archived": "true"}
+                if cursor:
+                    params["cursor"] = cursor
+                body = (await c.get(_LIST, headers=self._headers, params=params)).json()
+                _raise_for(body)
+                for ch in body.get("channels", []):
+                    _CHANNEL_IDS[f"#{ch['name']}"] = ch["id"]
+                if hit := _CHANNEL_IDS.get(channel):
+                    return hit
+                cursor = body.get("response_metadata", {}).get("next_cursor") or ""
+                if not cursor:
+                    raise queue.FatalError(f"channel not found: {channel}")
+
+    async def permalink(self, channel: str, ts: str) -> str | None:
+        """A durable URL for one message. None if Slack will not produce one."""
+        cid = await self.channel_id(channel)
+        async with httpx.AsyncClient(timeout=settings().slack_timeout_s) as c:
+            body = (
+                await c.get(
+                    _PERMALINK, headers=self._headers, params={"channel": cid, "message_ts": ts}
+                )
+            ).json()
+        return body.get("permalink") if body.get("ok") else None
 
     async def replies(self, channel: str, thread_ts: str, limit: int = 30) -> list[dict[str, Any]]:
         """Fetch a thread. `channel` must be an ID (C...), not a #name --

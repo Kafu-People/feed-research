@@ -24,6 +24,7 @@ JUDGE_SYSTEM = (_PROMPTS / "judge.md").read_text()
 DISTILL_SYSTEM = (_PROMPTS / "distill.md").read_text()
 SUMMARIZE_SYSTEM = (_PROMPTS / "summarize.md").read_text()
 ANSWER_SYSTEM = (_PROMPTS / "answer.md").read_text()
+DIGEST_SYSTEM = (_PROMPTS / "digest.md").read_text()
 
 
 class Refused(Exception):
@@ -138,6 +139,28 @@ class ClaudeClient:
         if not text or text.strip().rstrip(".") == "SKIP":
             return None
         return text
+
+    async def digest(self, headlines: str) -> str:
+        """One roundup of the day from the day's headlines.
+
+        Runs once a day, so there is no caching to win here -- a breakpoint on
+        a system prompt seen once every 24 hours never hits a live cache.
+        """
+        s = settings()
+        resp = await self._c.messages.create(
+            model=s.ai_digest_model,
+            # Headroom for thinking as well as output: on claude-opus-5
+            # max_tokens caps both, and deciding what mattered is the thinking.
+            max_tokens=8000,
+            output_config={"effort": s.ai_digest_effort},
+            system=[{"type": "text", "text": DIGEST_SYSTEM}],
+            messages=[{"role": "user", "content": headlines}],
+        )
+        if resp.stop_reason == "refusal":
+            cat = getattr(resp.stop_details, "category", None) if resp.stop_details else None
+            raise Refused(cat)
+        _observe("digest", resp.usage, model=s.ai_digest_model)
+        return "".join(b.text for b in resp.content if b.type == "text").strip()
 
     async def distill(self, sentence: str) -> TopicDraft:
         s = settings()

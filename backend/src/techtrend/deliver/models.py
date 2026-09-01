@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, PrimaryKeyConstraint, Text, func
+from sqlalchemy import (
+    BigInteger,
+    Date,
+    DateTime,
+    ForeignKey,
+    Integer,
+    PrimaryKeyConstraint,
+    Text,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from techtrend.platform.db import Base
@@ -35,6 +44,26 @@ class SlackPost(Base):
     # normal outcome, not a failure. Recorded so a future reformat can address
     # the message directly instead of scanning the thread for it.
     summary_ts: Mapped[str | None] = mapped_column(Text)
+    posted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class DailyDigest(Base):
+    """One row per local day that has been reported, per channel.
+
+    `day` is a DATE in the digest timezone, not a UTC instant: the thing that
+    must happen exactly once is "the 1st of September in Sao Paulo", and the
+    UTC instant that corresponds to changes with the offset.
+    """
+
+    __tablename__ = "daily_digests"
+    __table_args__ = (PrimaryKeyConstraint("day", "channel"),)
+
+    day: Mapped[date] = mapped_column(Date, nullable=False)
+    channel: Mapped[str] = mapped_column(Text, nullable=False)
+    ts: Mapped[str] = mapped_column(Text, nullable=False)
+    story_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     posted_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

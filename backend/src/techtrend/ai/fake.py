@@ -55,6 +55,10 @@ class FakeAIClient:
             return None  # mirrors the real client's SKIP on thin extraction
         return f"{title.rstrip('.')}. In plain terms, this is what the coverage says."
 
+    async def digest(self, headlines: str) -> str:
+        n = len([ln for ln in headlines.splitlines() if ln.strip().startswith(("1", "2", "3"))])
+        return f"A steady day across the feed.\n\n\u2022 `{n}` stories carried, mostly routine."
+
     async def distill(self, sentence: str) -> TopicDraft:
         words = [w for w in re.findall(r"[\w-]+", sentence.lower()) if w not in _STOP]
         must = [w for w in words if len(w) > 2][:6] or ["news"]

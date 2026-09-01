@@ -1,10 +1,10 @@
 [Unit]
-Description=TechTrend pipeline worker (collect, read, group)
+Description=TechTrend pipeline worker (collect, read, group, match, notify, digest)
 After=network-online.target
 
 [Service]
 WorkingDirectory=/opt/TechTrend/backend
-ExecStart=/opt/TechTrend/backend/.venv/bin/techtrend worker --stage collect,read,group,match,notify,maintenance --concurrency 4
+ExecStart=/opt/TechTrend/backend/.venv/bin/techtrend worker --stage collect,read,group,match,notify,digest,maintenance --concurrency 4
 Restart=always
 RestartSec=10
 

@@ -171,6 +171,27 @@ class Settings(BaseSettings):
     # Extraction is imperfect. Below this, the "article" is usually a paywall
     # notice or a nav menu -- not worth an API call, and worse if summarised.
     slack_summary_min_chars: int = 600
+    # --- daily digest ----------------------------------------------------
+    # One roundup of the day's channel, posted at digest_hour local time.
+    digest_enabled: bool = True
+    digest_hour: int = Field(default=18, ge=0, le=23)
+    # An IANA zone, not a UTC offset. Brazil dropped DST in 2019 so
+    # America/Sao_Paulo is a flat UTC-3 today, but hardcoding -3 would break
+    # silently if that ever changes -- and it has changed before.
+    digest_timezone: str = "America/Sao_Paulo"
+    # The digest reads the 24h ENDING at digest_hour, not the local calendar
+    # day: a calendar day would drop everything posted after 18:00 into a gap
+    # that no digest ever covers.
+    digest_window_hours: float = 24.0
+    # Ceiling on how many stories are handed to the model. Beyond this the
+    # highest-scoring survive -- a digest of 200 headlines is not a digest.
+    digest_max_stories: int = 60
+    # Synthesis across the whole day, not a per-article rewrite: this is the
+    # one call that has to decide what actually mattered. Once a day, so even
+    # Opus costs well under a dollar a month.
+    ai_digest_model: str = "claude-opus-5"
+    ai_digest_effort: Effort = "medium"
+
     # Socket Mode app-level token (xapp-, scope connections:write). Without it
     # the Q&A listener will not start -- there is no public HTTPS endpoint on
     # this host for Slack's Events API to reach, so the outbound WebSocket is

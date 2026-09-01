@@ -339,6 +339,12 @@ async def _notify(job: queue.Job) -> None:
     await notify_worker.run(job)
 
 
+async def _digest(job: queue.Job) -> None:
+    from techtrend.deliver import digest
+
+    await digest.run(job)
+
+
 async def _maintenance(job: queue.Job) -> None:
     reclaimed = await queue.reap_stale()
     if reclaimed:
@@ -356,6 +362,7 @@ HANDLERS = {
     "match": _match,
     "feedback": _feedback,
     "notify": _notify,
+    "digest": _digest,
     "maintenance": _maintenance,
 }
 
@@ -374,6 +381,30 @@ async def _sweep_maintenance() -> None:
     """
     bucket = int(time.time()) // settings().maintenance_interval_s
     await queue.enqueue("maintenance", f"maintenance:{bucket}", priority=PRIORITY_BACKFILL)
+
+
+async def _sweep_digest() -> None:
+    """Enqueue the day's digest once the local clock passes the digest hour.
+
+    Keyed on the LOCAL DATE, so the ON CONFLICT is what makes this fire once a
+    day no matter how often the loop spins -- there is no cron here, the same
+    way there is no scheduler process for collection.
+
+    The date key alone is not sufficient memory, because `purge_done` deletes
+    the finished job row; `daily_digests` is the durable half, checked inside
+    the stage itself.
+    """
+    from techtrend.deliver import digest
+
+    if not settings().digest_enabled or not digest.is_due():
+        return
+    day = digest.local_day()
+    await queue.enqueue(
+        "digest",
+        f"digest:{day.isoformat()}",
+        payload={"day": day.isoformat()},
+        priority=PRIORITY_BACKFILL,
+    )
 
 
 async def _run_worker(stages: list[str], concurrency: int) -> None:
@@ -396,6 +427,7 @@ async def _run_worker(stages: list[str], concurrency: int) -> None:
         sweep = collect_worker.sweep_due
 
     do_maintenance = "maintenance" in stages
+    do_digest = "digest" in stages
 
     while not stop.is_set():
         if sweep is not None:
@@ -403,6 +435,8 @@ async def _run_worker(stages: list[str], concurrency: int) -> None:
             await sweep()
         if do_maintenance:
             await _sweep_maintenance()
+        if do_digest:
+            await _sweep_digest()
         jobs = await queue.claim(stages, batch=concurrency)
         if not jobs:
             # Graceful shutdown: stop claiming, let in-flight jobs finish.
