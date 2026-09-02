@@ -99,7 +99,11 @@ class Settings(BaseSettings):
     # Not TT_-prefixed: same var the Anthropic SDK reads from the process
     # env. Loading it here too makes `.env` sufficient in local dev.
     anthropic_api_key: SecretStr | None = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
-    ai_model: str = "claude-opus-5"
+    # Every stage runs on Haiku 4.5 by user decision (2026-09-02). Each model
+    # setting is still separate, so one stage can be promoted without moving
+    # the rest -- `_effort_kwargs` and `_max_tokens` in ai/claude.py absorb
+    # the call-shape differences between the families either way.
+    ai_model: str = "claude-haiku-4-5"
     # Distill is expansion, not judgment, and the user is WAITING (~2s budget).
     # Haiku is fast and cheap and good at it; judging quality stays on ai_model.
     ai_distill_model: str = "claude-haiku-4-5"
@@ -119,7 +123,7 @@ class Settings(BaseSettings):
     # article does not state outright, and the failure we care about -- a
     # confident answer from memory rather than from the text -- is what a
     # weaker model does more often. ~$0.012/question, ~$7/month at 20/day.
-    ai_answer_model: str = "claude-opus-5"
+    ai_answer_model: str = "claude-haiku-4-5"
     ai_answer_effort: Effort = "medium"
     ai_judge_effort: Effort = "medium"
     ai_distill_effort: Effort = "low"
@@ -207,7 +211,7 @@ class Settings(BaseSettings):
     # Synthesis across the whole day, not a per-article rewrite: this is the
     # one call that has to decide what actually mattered. Once a day, so even
     # Opus costs well under a dollar a month.
-    ai_digest_model: str = "claude-opus-5"
+    ai_digest_model: str = "claude-haiku-4-5"
     ai_digest_effort: Effort = "medium"
 
     # Socket Mode app-level token (xapp-, scope connections:write). Without it

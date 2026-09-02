@@ -50,14 +50,23 @@ def _effort_kwargs(model: str, effort: str) -> dict[str, object]:
     return {} if _is_haiku(model) else {"output_config": {"effort": effort}}
 
 
-def _summary_max_tokens(model: str) -> int:
+def _max_tokens(model: str, *, plain: int, thinking: int) -> int:
     """Haiku writes straight into the response; a thinking model does not.
 
-    On Opus, max_tokens caps thinking AND output together. 400 was ample for
-    Haiku and would be swallowed whole by thinking on Opus, returning an empty
-    content array that reads to the caller as a model that declined.
+    On Opus, max_tokens caps thinking AND output TOGETHER, so a cap sized for
+    the answer alone gets swallowed by reasoning and returns an empty content
+    array -- which reads to the caller as a model that declined. Hence two
+    numbers: what the text needs, and what the text plus thinking needs.
     """
-    return 400 if _is_haiku(model) else 3000
+    return plain if _is_haiku(model) else thinking
+
+
+# Anthropic will not cache a prefix below this many tokens: 4096 on Haiku 4.5,
+# 1024 on Sonnet and Opus. Every prompt in ai/prompts/ is smaller than BOTH
+# (judge 284, answer 693, summarize 998, digest 1324), so a cache_control
+# breakpoint on any of them is a no-op that reads like an optimisation. They
+# are deliberately absent below. Re-measure before adding one back.
+HAIKU_CACHE_MIN_TOKENS = 4096
 
 
 class ClaudeClient:
@@ -74,19 +83,11 @@ class ClaudeClient:
         s = settings()
         resp = await self._c.messages.parse(
             model=s.ai_model,
-            # Headroom for THINKING, not for output: thinking is on by default
-            # on claude-opus-5 and max_tokens caps thinking + response text.
-            max_tokens=16000,
-            output_config={"effort": s.ai_judge_effort},
-            system=[
-                {
-                    "type": "text",
-                    "text": JUDGE_SYSTEM,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
+            max_tokens=_max_tokens(s.ai_model, plain=4000, thinking=16000),
+            system=[{"type": "text", "text": JUDGE_SYSTEM}],
             messages=[{"role": "user", "content": _render_judge(title, body, kw)}],
             output_format=JudgeResult,
+            **_effort_kwargs(s.ai_model, s.ai_judge_effort),
         )
         # Check stop_reason BEFORE reading content: a refusal is HTTP 200 with
         # an empty or partial content array.
@@ -107,17 +108,9 @@ class ClaudeClient:
         s = settings()
         resp = await self._c.messages.create(
             model=s.ai_answer_model,
-            # Headroom for THINKING, not just the reply: thinking is on by
-            # default on claude-opus-5 and max_tokens caps thinking + text.
-            max_tokens=8000,
-            output_config={"effort": s.ai_answer_effort},
-            system=[
-                {
-                    "type": "text",
-                    "text": ANSWER_SYSTEM,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
+            max_tokens=_max_tokens(s.ai_answer_model, plain=1500, thinking=8000),
+            system=[{"type": "text", "text": ANSWER_SYSTEM}],
+            **_effort_kwargs(s.ai_answer_model, s.ai_answer_effort),
             messages=[
                 {
                     "role": "user",
@@ -139,16 +132,13 @@ class ClaudeClient:
     async def summarize(self, title: str, body: str) -> str | None:
         """Plain-language summary for a chat channel. None when unsummarisable.
 
-        No `cache_control`: this system prompt is under Haiku 4.5's 4096-token
-        cache minimum, so a breakpoint here would never produce a hit.
-
         The model is configurable and the two families need different calls --
-        see `_effort_kwargs` and `_summary_max_tokens` for why.
+        see `_effort_kwargs` and `_max_tokens` for why.
         """
         s = settings()
         resp = await self._c.messages.create(
             model=s.ai_summary_model,
-            max_tokens=_summary_max_tokens(s.ai_summary_model),
+            max_tokens=_max_tokens(s.ai_summary_model, plain=400, thinking=3000),
             system=[{"type": "text", "text": SUMMARIZE_SYSTEM}],
             messages=[{"role": "user", "content": f"{title}\n\n{body}"}],
             **_effort_kwargs(s.ai_summary_model, s.ai_summary_effort),
@@ -175,11 +165,9 @@ class ClaudeClient:
         s = settings()
         resp = await self._c.messages.create(
             model=s.ai_digest_model,
-            # Headroom for thinking as well as output: on claude-opus-5
-            # max_tokens caps both, and deciding what mattered is the thinking.
-            max_tokens=8000,
-            output_config={"effort": s.ai_digest_effort},
+            max_tokens=_max_tokens(s.ai_digest_model, plain=2000, thinking=8000),
             system=[{"type": "text", "text": DIGEST_SYSTEM}],
+            **_effort_kwargs(s.ai_digest_model, s.ai_digest_effort),
             messages=[{"role": "user", "content": headlines}],
         )
         if resp.stop_reason == "refusal":
@@ -192,16 +180,11 @@ class ClaudeClient:
         s = settings()
         resp = await self._c.messages.parse(
             model=s.ai_distill_model,
-            max_tokens=8000,
-            system=[
-                {
-                    "type": "text",
-                    "text": DISTILL_SYSTEM,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
+            max_tokens=_max_tokens(s.ai_distill_model, plain=1000, thinking=8000),
+            system=[{"type": "text", "text": DISTILL_SYSTEM}],
             messages=[{"role": "user", "content": sentence}],
             output_format=TopicDraft,
+            **_effort_kwargs(s.ai_distill_model, s.ai_distill_effort),
         )
         if resp.stop_reason == "refusal":
             raise Refused(None)
