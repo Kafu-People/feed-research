@@ -211,6 +211,14 @@ class Settings(BaseSettings):
     # Synthesis across the whole day, not a per-article rewrite: this is the
     # one call that has to decide what actually mattered. Once a day, so even
     # Opus costs well under a dollar a month.
+    # The weekly roundup and its forecast. Once a week, so even a larger model
+    # is pennies -- but the forecast half is the reason to consider one.
+    # Ceiling on how many stories are handed to the weekly model. A week is
+    # roughly seven digests, so this is sized above digest_max_stories -- but
+    # a roundup of 400 headlines is not a roundup either.
+    weekly_max_stories: int = 150
+    ai_weekly_model: str = "claude-haiku-4-5"
+    ai_weekly_effort: Effort = "medium"
     ai_digest_model: str = "claude-haiku-4-5"
     ai_digest_effort: Effort = "medium"
 

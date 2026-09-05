@@ -24,5 +24,3 @@ dist/
 build/
 .DS_Store
 
-# Generated weekly reports
-/reports/

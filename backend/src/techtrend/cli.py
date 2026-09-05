@@ -220,25 +220,28 @@ def print_top_stories_cmd(limit: int = 15) -> None:
 
 @app.command("weekly-report")
 def weekly_report_cmd(
-    out: Annotated[str | None, typer.Option(help="Write to this path instead of stdout")] = None,
+    post: Annotated[bool, typer.Option(help="Post to the Slack channel")] = False,
     week_ending: Annotated[
         str | None, typer.Option(help="ISO date; defaults to the latest completed week")
     ] = None,
-    post: Annotated[bool, typer.Option(help="Also post the report to the Slack channel")] = False,
 ) -> None:
-    """The operator's week: ingest, source health, queue depth, delivery.
+    """The week's news, and what it points to. Prints unless --post.
 
-    Reproducible by construction -- the window is a fixed past boundary and
-    every figure is a query, so re-running it after an outage yields the same
-    report rather than a different one.
+    Without --post this is a dry run: it costs one model call and posts
+    nothing, which is how you read the week before the channel does.
     """
     bootstrap()
     from datetime import UTC, datetime, timedelta
     from datetime import time as _time
-    from pathlib import Path
 
     from techtrend.deliver import report as rep
+    from techtrend.deliver.digest import linkify
+    from techtrend.deliver.slack import SlackClient, to_mrkdwn
     from techtrend.platform.db import session_scope
+
+    s = settings()
+    if not s.slack_channel:
+        raise typer.BadParameter("weekly-report needs slack_channel configured")
 
     if week_ending:
         from datetime import date as _date
@@ -250,31 +253,24 @@ def weekly_report_cmd(
         since, until = rep.week_window()
 
     async def _go() -> tuple[str, str | None]:
-        async with session_scope() as s:
-            r = await rep.collect(s, since.astimezone(UTC), until.astimezone(UTC))
+        async with session_scope() as sess:
+            body, rows, totals = await rep.build(
+                sess, s.slack_channel, since.astimezone(UTC), until.astimezone(UTC)
+            )
+        if not body:
+            return "(no stories carried in this window)", None
         if not post:
-            return rep.render(r), None
-        from techtrend.deliver.slack import SlackClient
+            return body, None
+        client = SlackClient()
+        linked = await linkify(to_mrkdwn(body), rows, client, s.slack_channel)
+        fallback, blocks = rep.blocks_for(until, linked, totals.n, totals.sites)
+        ts = await client.post(s.slack_channel, fallback, blocks=blocks, unfurl=False)
+        return body, ts
 
-        st = settings()
-        if st.slack_bot_token is None or not st.slack_channel:
-            raise typer.BadParameter("--post needs slack_bot_token and slack_channel configured")
-        fallback, blocks = rep.slack_blocks(r)
-        # unfurl off: the report is a status message, and Slack expanding a
-        # preview under it would push the numbers off the first screen.
-        ts = await SlackClient().post(st.slack_channel, fallback, blocks=blocks, unfurl=False)
-        return rep.render(r), ts
-
-    # Written outside the event loop: a blocking file write inside it buys
-    # nothing and trips the async-safety lint.
     body, ts = asyncio.run(_go())
-    if out:
-        Path(out).write_text(body, encoding="utf-8")
-        typer.echo(f"wrote {out} ({len(body):,} chars)")
-    elif not post:
-        typer.echo(body)
+    typer.echo(body)
     if ts:
-        typer.echo(f"posted to {settings().slack_channel} (ts={ts})")
+        typer.echo(f"\nposted to {s.slack_channel} (ts={ts})")
 
 
 @app.command("fingerprint-study")

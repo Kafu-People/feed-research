@@ -25,6 +25,7 @@ DISTILL_SYSTEM = (_PROMPTS / "distill.md").read_text()
 SUMMARIZE_SYSTEM = (_PROMPTS / "summarize.md").read_text()
 ANSWER_SYSTEM = (_PROMPTS / "answer.md").read_text()
 DIGEST_SYSTEM = (_PROMPTS / "digest.md").read_text()
+WEEKLY_SYSTEM = (_PROMPTS / "weekly.md").read_text()
 
 
 class Refused(Exception):
@@ -174,6 +175,27 @@ class ClaudeClient:
             cat = getattr(resp.stop_details, "category", None) if resp.stop_details else None
             raise Refused(cat)
         _observe("digest", resp.usage, model=s.ai_digest_model, effort=s.ai_digest_effort)
+        return "".join(b.text for b in resp.content if b.type == "text").strip()
+
+    async def weekly(self, headlines: str) -> str:
+        """One roundup of the week, plus where it points.
+
+        A week of headlines is roughly seven times a day's, and the forecast
+        half needs room to reason across them -- hence its own token ceiling
+        rather than the digest's.
+        """
+        s = settings()
+        resp = await self._c.messages.create(
+            model=s.ai_weekly_model,
+            max_tokens=_max_tokens(s.ai_weekly_model, plain=4000, thinking=16000),
+            system=[{"type": "text", "text": WEEKLY_SYSTEM}],
+            **_effort_kwargs(s.ai_weekly_model, s.ai_weekly_effort),
+            messages=[{"role": "user", "content": headlines}],
+        )
+        if resp.stop_reason == "refusal":
+            cat = getattr(resp.stop_details, "category", None) if resp.stop_details else None
+            raise Refused(cat)
+        _observe("weekly", resp.usage, model=s.ai_weekly_model, effort=s.ai_weekly_effort)
         return "".join(b.text for b in resp.content if b.type == "text").strip()
 
     async def distill(self, sentence: str) -> TopicDraft:
