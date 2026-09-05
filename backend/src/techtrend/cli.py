@@ -218,6 +218,50 @@ def print_top_stories_cmd(limit: int = 15) -> None:
     asyncio.run(_go())
 
 
+@app.command("weekly-report")
+def weekly_report_cmd(
+    out: Annotated[str | None, typer.Option(help="Write to this path instead of stdout")] = None,
+    week_ending: Annotated[
+        str | None, typer.Option(help="ISO date; defaults to the latest completed week")
+    ] = None,
+) -> None:
+    """The operator's week: ingest, source health, queue depth, delivery.
+
+    Reproducible by construction -- the window is a fixed past boundary and
+    every figure is a query, so re-running it after an outage yields the same
+    report rather than a different one.
+    """
+    bootstrap()
+    from datetime import UTC, datetime, timedelta
+    from datetime import time as _time
+    from pathlib import Path
+
+    from techtrend.deliver import report as rep
+    from techtrend.platform.db import session_scope
+
+    if week_ending:
+        from datetime import date as _date
+
+        end = _date.fromisoformat(week_ending)
+        until = datetime.combine(end, _time(rep.REPORT_HOUR), tzinfo=rep.tz())
+        since = until - timedelta(days=7)
+    else:
+        since, until = rep.week_window()
+
+    async def _go() -> str:
+        async with session_scope() as s:
+            return rep.render(await rep.collect(s, since.astimezone(UTC), until.astimezone(UTC)))
+
+    # Written outside the event loop: a blocking file write inside it buys
+    # nothing and trips the async-safety lint.
+    body = asyncio.run(_go())
+    if out:
+        Path(out).write_text(body, encoding="utf-8")
+        typer.echo(f"wrote {out} ({len(body):,} chars)")
+    else:
+        typer.echo(body)
+
+
 @app.command("fingerprint-study")
 def fingerprint_study_cmd() -> None:
     """THE most important measurement in the project, and it costs one query.

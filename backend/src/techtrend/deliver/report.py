@@ -1,0 +1,435 @@
+"""The weekly report: seven days of the pipeline in, one operator briefing out.
+
+Distinct from the daily digest in both audience and input. The digest is for a
+READER and recaps what the channel showed. This is for the OPERATOR and recaps
+what the SYSTEM did -- ingest volume, source health, queue depth, delivery --
+because the failures that matter here (a feed that died, a stage that stopped)
+are invisible in a digest that only ever describes stories that made it through.
+
+Every projection is arithmetic on observed rows, never a model's guess. A
+weekly number a reader might act on has to be reproducible from the database,
+so nothing in here calls the AI client: a hallucinated trend in a report that
+looks authoritative is worse than no report.
+
+Story text surfaced here passes BOTH content gates -- `site_blocked` on the
+publisher and `blocked` on the terms -- exactly as notify and match do. A new
+delivery surface that skips them is how banned content reaches a reader by the
+back door.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
+from typing import Any
+from zoneinfo import ZoneInfo
+
+from sqlalchemy import text
+
+from techtrend.platform import telemetry
+from techtrend.platform.config import settings, site_blocked
+from techtrend.topic.match import blocked, searchable
+
+# Saturday. `datetime.weekday()` is Monday-0, so Saturday is 5.
+REPORT_WEEKDAY = 5
+REPORT_HOUR = 15
+
+
+def tz() -> ZoneInfo:
+    """The report's clock. Shared with the digest deliberately: two delivery
+    surfaces on two different timezones would put the operator's week and the
+    reader's day out of step for no reason."""
+    return ZoneInfo(settings().digest_timezone)
+
+
+def week_window(now: datetime | None = None) -> tuple[datetime, datetime]:
+    """(since, until) for the most recent COMPLETED report week.
+
+    `until` is the latest Saturday REPORT_HOUR local that has already passed;
+    `since` is seven days before it. Anchoring on a boundary in the past keeps
+    the report reproducible: running it twice, or re-running it days later
+    after an outage, covers the same window and yields the same numbers.
+    """
+    local = (now or datetime.now(UTC)).astimezone(tz())
+    anchor = local.replace(hour=REPORT_HOUR, minute=0, second=0, microsecond=0)
+    # Days back to the most recent Saturday, then one more week if that
+    # Saturday's hour has not yet arrived.
+    back = (local.weekday() - REPORT_WEEKDAY) % 7
+    until = anchor - timedelta(days=back)
+    if until > local:
+        until -= timedelta(days=7)
+    return until - timedelta(days=7), until
+
+
+_VOLUME = text("""
+    SELECT count(*) FILTER (WHERE fetched_at >= :since AND fetched_at < :until) AS this_week,
+           count(*) FILTER (WHERE fetched_at >= :prev  AND fetched_at < :since) AS prev_week,
+           count(*) FILTER (WHERE fetched_at >= :since AND fetched_at < :until
+                              AND story_id IS NOT NULL) AS grouped,
+           count(*) FILTER (WHERE fetched_at >= :since AND fetched_at < :until
+                              AND text_key IS NOT NULL) AS body_read
+      FROM articles
+""")
+
+_DAILY = text("""
+    SELECT (fetched_at AT TIME ZONE :zone)::date AS day, count(*) AS n
+      FROM articles WHERE fetched_at >= :since AND fetched_at < :until
+     GROUP BY 1 ORDER BY 1
+""")
+
+_TIERS = text("""
+    SELECT si.tier, count(a.id) AS n
+      FROM sites si JOIN articles a ON a.site_id = si.id
+     WHERE a.fetched_at >= :since AND a.fetched_at < :until
+     GROUP BY si.tier ORDER BY si.tier
+""")
+
+_SOURCES = text("""
+    SELECT si.name, si.domain, si.tier, si.authority, count(a.id) AS n
+      FROM sites si
+      LEFT JOIN articles a ON a.site_id = si.id
+                          AND a.fetched_at >= :since AND a.fetched_at < :until
+     GROUP BY si.id, si.name, si.domain, si.tier, si.authority
+     ORDER BY n DESC, si.authority DESC
+""")
+
+# A feed at or over the failure ceiling is not merely failing: the partial
+# index the scheduler polls (ix_endpoints_due) excludes it, so nothing will
+# ever retry it. That is a permanent loss of a source, and the reason this
+# report separates "failing" from "dropped".
+_ENDPOINTS = text("""
+    SELECT si.name, si.authority, e.kind, e.failure_streak, e.last_status
+      FROM endpoints e JOIN sites si ON si.id = e.site_id
+     WHERE e.failure_streak > 0
+     ORDER BY e.failure_streak DESC, si.authority DESC, si.name
+""")
+
+_SITES_NO_ENDPOINT = text("""
+    SELECT si.name, si.domain, si.authority
+      FROM sites si
+     WHERE NOT EXISTS (SELECT 1 FROM endpoints e WHERE e.site_id = si.id)
+     ORDER BY si.authority DESC, si.name
+""")
+
+_QUEUE = text("SELECT stage, state, count(*) AS n FROM jobs GROUP BY 1, 2 ORDER BY 1, 2")
+
+_STORIES = text("""
+    SELECT count(*) AS total,
+           count(*) FILTER (WHERE judged_at IS NOT NULL) AS judged,
+           max(judged_at) AS last_judged,
+           count(*) FILTER (WHERE created_at >= :since AND created_at < :until) AS created_week
+      FROM stories
+""")
+
+_DELIVERY = text("""
+    SELECT count(*) FILTER (WHERE posted_at >= :since AND posted_at < :until) AS posts,
+           count(*) FILTER (WHERE posted_at >= :prev  AND posted_at < :since) AS posts_prev,
+           count(*) FILTER (WHERE posted_at >= :since AND posted_at < :until
+                              AND summary_ts IS NOT NULL) AS with_summary
+      FROM slack_posts
+""")
+
+_DIGESTS = text("""
+    SELECT day, story_count FROM daily_digests
+     WHERE posted_at >= :since AND posted_at < :until ORDER BY day
+""")
+
+_TOPICS = text("""
+    SELECT t.id, t.title, t.subscriber_count,
+           count(m.story_id) FILTER (WHERE m.matched_at >= :since
+                                       AND m.matched_at < :until) AS n,
+           count(m.story_id) FILTER (WHERE m.matched_at >= :prev
+                                       AND m.matched_at < :since) AS n_prev,
+           avg(m.match_score) FILTER (WHERE m.matched_at >= :since
+                                        AND m.matched_at < :until) AS score
+      FROM topics t LEFT JOIN matches m ON m.topic_id = t.id
+     GROUP BY t.id, t.title, t.subscriber_count
+     ORDER BY n DESC, t.title
+""")
+
+# Widely-covered first: "the week's biggest" means the story the most distinct
+# outlets independently chose to run, which is the only reach signal available
+# while the judge stage is not scoring novelty.
+_TOP = text("""
+    SELECT a.title, a.description, a.entities, si.name AS site, si.domain,
+           st.source_count, st.importance
+      FROM stories st
+      JOIN articles a ON a.id = st.display_article_id
+      JOIN sites si ON si.id = a.site_id
+     WHERE st.created_at >= :since AND st.created_at < :until
+     ORDER BY st.source_count DESC, st.importance DESC NULLS LAST
+     LIMIT :cap
+""")
+
+_ENGAGEMENT = text("""
+    SELECT count(*) FILTER (WHERE at >= :since AND at < :until) AS events,
+           count(DISTINCT user_id) FILTER (WHERE at >= :since AND at < :until) AS users
+      FROM events
+""")
+
+
+@dataclass
+class Story:
+    title: str
+    site: str
+    domain: str
+    source_count: int
+
+
+@dataclass
+class Report:
+    since: datetime
+    until: datetime
+    ingested: int = 0
+    ingested_prev: int = 0
+    grouped: int = 0
+    body_read: int = 0
+    daily: list[Any] = field(default_factory=list)
+    tiers: list[Any] = field(default_factory=list)
+    sources_live: list[Any] = field(default_factory=list)
+    sources_silent: list[Any] = field(default_factory=list)
+    endpoints_failing: list[Any] = field(default_factory=list)
+    endpoints_dropped: list[Any] = field(default_factory=list)
+    sites_unconfigured: list[Any] = field(default_factory=list)
+    queue: list[Any] = field(default_factory=list)
+    stories_total: int = 0
+    stories_judged: int = 0
+    stories_week: int = 0
+    last_judged: datetime | None = None
+    posts: int = 0
+    posts_prev: int = 0
+    posts_with_summary: int = 0
+    digests: list[Any] = field(default_factory=list)
+    topics: list[Any] = field(default_factory=list)
+    top: list[Story] = field(default_factory=list)
+    gated: int = 0
+    events: int = 0
+    users_active: int = 0
+
+    @property
+    def delta(self) -> float:
+        """Ingest change against the prior week, as a percentage."""
+        return (
+            0.0
+            if not self.ingested_prev
+            else 100.0 * (self.ingested - self.ingested_prev) / self.ingested_prev
+        )
+
+    @property
+    def unjudged(self) -> int:
+        return self.stories_total - self.stories_judged
+
+
+async def collect(sess: Any, since: datetime, until: datetime) -> Report:
+    """Every number in the report, in one pass over the database."""
+    prev = since - timedelta(days=7)
+    args = {"since": since, "until": until, "prev": prev}
+    r = Report(since=since, until=until)
+
+    vol = (await sess.execute(_VOLUME, args)).one()
+    r.ingested, r.ingested_prev = vol.this_week, vol.prev_week
+    r.grouped, r.body_read = vol.grouped, vol.body_read
+
+    zone = settings().digest_timezone
+    r.daily = list((await sess.execute(_DAILY, {**args, "zone": zone})).all())
+    r.tiers = list((await sess.execute(_TIERS, args)).all())
+
+    for row in (await sess.execute(_SOURCES, args)).all():
+        (r.sources_live if row.n else r.sources_silent).append(row)
+
+    for row in (await sess.execute(_ENDPOINTS, args)).all():
+        # 10 is the ceiling baked into ix_endpoints_due's WHERE clause.
+        (r.endpoints_dropped if row.failure_streak >= 10 else r.endpoints_failing).append(row)
+
+    r.sites_unconfigured = list((await sess.execute(_SITES_NO_ENDPOINT, args)).all())
+    r.queue = list((await sess.execute(_QUEUE, args)).all())
+
+    st = (await sess.execute(_STORIES, args)).one()
+    r.stories_total, r.stories_judged = st.total, st.judged
+    r.last_judged, r.stories_week = st.last_judged, st.created_week
+
+    dl = (await sess.execute(_DELIVERY, args)).one()
+    r.posts, r.posts_prev, r.posts_with_summary = dl.posts, dl.posts_prev, dl.with_summary
+    r.digests = list((await sess.execute(_DIGESTS, args)).all())
+    r.topics = list((await sess.execute(_TOPICS, args)).all())
+
+    eng = (await sess.execute(_ENGAGEMENT, args)).one()
+    r.events, r.users_active = eng.events, eng.users
+
+    r.top, r.gated = _gated_top((await sess.execute(_TOP, {**args, "cap": 60})).all())
+    return r
+
+
+def _gated_top(rows: list[Any], keep: int = 10) -> tuple[list[Story], int]:
+    """Apply both content gates, then keep the top `keep` survivors.
+
+    Over-fetched on purpose: gating after the LIMIT would silently shorten the
+    list whenever a blocked story ranked highly, which reads as a quiet week
+    rather than as the gate doing its job.
+    """
+    s = settings()
+    out: list[Story] = []
+    dropped = 0
+    for row in rows:
+        if ban := site_blocked(row.domain, s.blocked_sites):
+            dropped += 1
+            telemetry.log.info("report.site_blocked", domain=row.domain, ban=ban)
+            continue
+        story = searchable(row.title, row.description, list(row.entities or []))
+        if hit := blocked(story, s.block_terms):
+            dropped += 1
+            telemetry.log.info("report.term_blocked", term=hit)
+            continue
+        out.append(Story(row.title, row.site, row.domain, row.source_count))
+        if len(out) == keep:
+            break
+    return out, dropped
+
+
+def _pct(n: int, of: int) -> str:
+    """A whole-number percentage, safe when the denominator is zero."""
+    return "0" if not of else f"{100.0 * n / of:.0f}"
+
+
+def _bar(n: int, peak: int, width: int = 24) -> str:
+    return "#" * max(1, round(width * n / peak)) if n and peak else ""
+
+
+def render(r: Report) -> str:
+    """Markdown. Plain enough to paste into Slack, a file, or a terminal."""
+    zone = datetime.now(tz()).strftime("%Z") or settings().digest_timezone
+    # The window is carried in UTC and rendered local: a report headed with a
+    # local zone label but UTC clock times misstates its own boundaries.
+    since_l, until_l = r.since.astimezone(tz()), r.until.astimezone(tz())
+    lines: list[str] = []
+    add = lines.append
+
+    add(f"# TechTrend Weekly — week ending {until_l:%A, %d %B %Y} {until_l:%H:%M} {zone}")
+    add("")
+    add(f"Window: {since_l:%Y-%m-%d %H:%M} to {until_l:%Y-%m-%d %H:%M} ({zone})")
+    add("")
+
+    add("## Ingest")
+    add("")
+    arrow = "+" if r.delta >= 0 else ""
+    add(
+        f"- Articles ingested: **{r.ingested:,}** ({arrow}{r.delta:.1f}% vs prior week"
+        f" — {r.ingested_prev:,})"
+    )
+    add(f"- Grouped into stories: {r.grouped:,} ({_pct(r.grouped, r.ingested)}% of ingest)")
+    add(f"- Full text retrieved: {r.body_read:,} ({_pct(r.body_read, r.ingested)}%)")
+    add(f"- New stories: {r.stories_week:,}")
+    add("")
+
+    if r.daily:
+        peak = max(d.n for d in r.daily)
+        add("Daily ingest:")
+        add("")
+        add("```")
+        for d in r.daily:
+            add(f"{d.day}  {d.n:>5}  {_bar(d.n, peak)}")
+        add("```")
+        add("")
+
+    add("## Sources")
+    add("")
+    live, silent = len(r.sources_live), len(r.sources_silent)
+    add(f"- Publishing this week: **{live}** of {live + silent}")
+    if r.tiers:
+        total = sum(t.n for t in r.tiers) or 1
+        mix = ", ".join(f"{t.tier} {100.0 * t.n / total:.0f}%" for t in r.tiers)
+        add(f"- Tier mix: {mix}")
+    add("")
+    if r.sources_live[:10]:
+        add("| Source | Tier | Authority | Articles |")
+        add("|---|---|---|---|")
+        for s in r.sources_live[:10]:
+            add(f"| {s.name} | {s.tier} | {s.authority:.2f} | {s.n:,} |")
+        add("")
+
+    if r.endpoints_dropped or r.endpoints_failing or r.sites_unconfigured:
+        add("## Feed health")
+        add("")
+        if r.endpoints_dropped:
+            add(
+                f"**Dropped from the schedule ({len(r.endpoints_dropped)})** — at the"
+                " failure ceiling, so nothing retries them:"
+            )
+            add("")
+            for e in r.endpoints_dropped:
+                st = f"HTTP {e.last_status}" if e.last_status else "no response"
+                add(f"- {e.name} (authority {e.authority:.2f}) — {st}")
+            add("")
+        if r.endpoints_failing:
+            add(f"**Failing ({len(r.endpoints_failing)})** — still retried:")
+            add("")
+            for e in r.endpoints_failing:
+                st = f"HTTP {e.last_status}" if e.last_status else "no response"
+                add(f"- {e.name} — {e.failure_streak}/10 failures, {st}")
+            add("")
+        if r.sites_unconfigured:
+            add(
+                f"**No feed configured ({len(r.sites_unconfigured)})** — registered as a"
+                " source but with nothing to poll:"
+            )
+            add("")
+            for s in r.sites_unconfigured:
+                add(f"- {s.name} (authority {s.authority:.2f})")
+            add("")
+
+    add("## Pipeline")
+    add("")
+    if r.queue:
+        add("| Stage | State | Jobs |")
+        add("|---|---|---|")
+        for q in r.queue:
+            add(f"| {q.stage} | {q.state} | {q.n:,} |")
+        add("")
+    judged_pct = _pct(r.stories_judged, r.stories_total)
+    add(f"- Stories judged: {r.stories_judged:,} of {r.stories_total:,} ({judged_pct}%)")
+    if r.last_judged:
+        stale = (datetime.now(UTC) - r.last_judged).days
+        add(f"- Last judged: {r.last_judged:%Y-%m-%d} ({stale} days ago)")
+    add(f"- Unjudged: **{r.unjudged:,}**")
+    add("")
+
+    add("## Delivery")
+    add("")
+    d = r.posts - r.posts_prev
+    add(f"- Stories posted to Slack: **{r.posts:,}** ({'+' if d >= 0 else ''}{d} vs prior week)")
+    add(
+        f"- With a summary reply: {r.posts_with_summary:,} ({_pct(r.posts_with_summary, r.posts)}%)"
+    )
+    add(f"- Daily digests filed: {len(r.digests)} of 7")
+    if r.digests:
+        add("")
+        for g in r.digests:
+            add(f"  - {g.day}: {g.story_count} stories")
+    add("")
+    add(f"- Reader events: {r.events:,} from {r.users_active} active user(s)")
+    add("")
+
+    add("## Topics")
+    add("")
+    add("| Topic | Matches | Prior | Change | Avg score |")
+    add("|---|---|---|---|---|")
+    for t in r.topics:
+        chg = "new" if not t.n_prev else f"{100.0 * (t.n - t.n_prev) / t.n_prev:+.0f}%"
+        score = f"{t.score:.3f}" if t.score is not None else "—"
+        add(f"| {t.title} | {t.n:,} | {t.n_prev:,} | {chg} | {score} |")
+    add("")
+
+    add("## Most-covered stories")
+    add("")
+    if r.top:
+        for i, s in enumerate(r.top, 1):
+            reach = f" — {s.source_count} outlets" if s.source_count > 1 else ""
+            add(f"{i}. {s.title} ({s.site}{reach})")
+    else:
+        add("_No stories cleared the content gates this week._")
+    add("")
+    if r.gated:
+        add(f"_{r.gated} stor{'y' if r.gated == 1 else 'ies'} withheld by the content gates._")
+        add("")
+
+    return "\n".join(lines)
