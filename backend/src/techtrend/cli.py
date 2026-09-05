@@ -224,6 +224,7 @@ def weekly_report_cmd(
     week_ending: Annotated[
         str | None, typer.Option(help="ISO date; defaults to the latest completed week")
     ] = None,
+    post: Annotated[bool, typer.Option(help="Also post the report to the Slack channel")] = False,
 ) -> None:
     """The operator's week: ingest, source health, queue depth, delivery.
 
@@ -248,18 +249,32 @@ def weekly_report_cmd(
     else:
         since, until = rep.week_window()
 
-    async def _go() -> str:
+    async def _go() -> tuple[str, str | None]:
         async with session_scope() as s:
-            return rep.render(await rep.collect(s, since.astimezone(UTC), until.astimezone(UTC)))
+            r = await rep.collect(s, since.astimezone(UTC), until.astimezone(UTC))
+        if not post:
+            return rep.render(r), None
+        from techtrend.deliver.slack import SlackClient
+
+        st = settings()
+        if st.slack_bot_token is None or not st.slack_channel:
+            raise typer.BadParameter("--post needs slack_bot_token and slack_channel configured")
+        fallback, blocks = rep.slack_blocks(r)
+        # unfurl off: the report is a status message, and Slack expanding a
+        # preview under it would push the numbers off the first screen.
+        ts = await SlackClient().post(st.slack_channel, fallback, blocks=blocks, unfurl=False)
+        return rep.render(r), ts
 
     # Written outside the event loop: a blocking file write inside it buys
     # nothing and trips the async-safety lint.
-    body = asyncio.run(_go())
+    body, ts = asyncio.run(_go())
     if out:
         Path(out).write_text(body, encoding="utf-8")
         typer.echo(f"wrote {out} ({len(body):,} chars)")
-    else:
+    elif not post:
         typer.echo(body)
+    if ts:
+        typer.echo(f"posted to {settings().slack_channel} (ts={ts})")
 
 
 @app.command("fingerprint-study")

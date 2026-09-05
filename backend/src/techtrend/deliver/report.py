@@ -98,7 +98,7 @@ _SOURCES = text("""
 # ever retry it. That is a permanent loss of a source, and the reason this
 # report separates "failing" from "dropped".
 _ENDPOINTS = text("""
-    SELECT si.name, si.authority, e.kind, e.failure_streak, e.last_status
+    SELECT si.name, si.domain, si.authority, e.kind, e.failure_streak, e.last_status
       FROM endpoints e JOIN sites si ON si.id = e.site_id
      WHERE e.failure_streak > 0
      ORDER BY e.failure_streak DESC, si.authority DESC, si.name
@@ -208,6 +208,7 @@ class Report:
     topics: list[Any] = field(default_factory=list)
     top: list[Story] = field(default_factory=list)
     gated: int = 0
+    banned_publishers: int = 0
     events: int = 0
     users_active: int = 0
 
@@ -240,13 +241,20 @@ async def collect(sess: Any, since: datetime, until: datetime) -> Report:
     r.tiers = list((await sess.execute(_TIERS, args)).all())
 
     for row in (await sess.execute(_SOURCES, args)).all():
+        if _banned(row.domain):
+            r.banned_publishers += 1
+            continue
         (r.sources_live if row.n else r.sources_silent).append(row)
 
     for row in (await sess.execute(_ENDPOINTS, args)).all():
+        if _banned(row.domain):
+            continue
         # 10 is the ceiling baked into ix_endpoints_due's WHERE clause.
         (r.endpoints_dropped if row.failure_streak >= 10 else r.endpoints_failing).append(row)
 
-    r.sites_unconfigured = list((await sess.execute(_SITES_NO_ENDPOINT, args)).all())
+    r.sites_unconfigured = [
+        s for s in (await sess.execute(_SITES_NO_ENDPOINT, args)).all() if not _banned(s.domain)
+    ]
     r.queue = list((await sess.execute(_QUEUE, args)).all())
 
     st = (await sess.execute(_STORIES, args)).one()
@@ -263,6 +271,17 @@ async def collect(sess: Any, since: datetime, until: datetime) -> Report:
 
     r.top, r.gated = _gated_top((await sess.execute(_TOP, {**args, "cap": 60})).all())
     return r
+
+
+def _banned(domain: str | None) -> bool:
+    """A publisher the operator banned.
+
+    Their feed necessarily stops returning usable articles, so leaving them in
+    the health lists reports our own ban as a system failure -- and puts a
+    banned publisher's name on a delivery surface, which is the thing the ban
+    exists to prevent. Counted, never named.
+    """
+    return site_blocked(domain, settings().blocked_sites) is not None
 
 
 def _gated_top(rows: list[Any], keep: int = 10) -> tuple[list[Story], int]:
@@ -339,7 +358,9 @@ def render(r: Report) -> str:
     add("## Sources")
     add("")
     live, silent = len(r.sources_live), len(r.sources_silent)
-    add(f"- Publishing this week: **{live}** of {live + silent}")
+    add(f"- Publishing this week: **{live}** of {live + silent} carried")
+    if r.banned_publishers:
+        add(f"- Not carried (operator ban): {r.banned_publishers}")
     if r.tiers:
         total = sum(t.n for t in r.tiers) or 1
         mix = ", ".join(f"{t.tier} {100.0 * t.n / total:.0f}%" for t in r.tiers)
@@ -452,3 +473,120 @@ def render(r: Report) -> str:
         add("")
 
     return "\n".join(lines)
+
+
+# ------------------------------------------------------------------ Slack
+
+
+# Slack's mrkdwn has no table support: a markdown table renders as raw pipes.
+# The columns still carry the meaning, so they are re-laid as fixed-width text
+# inside a code block, which Slack renders in monospace and aligns.
+def _fixed_table(header: list[str], rows: list[list[str]]) -> list[str]:
+    widths = [max(len(header[i]), *(len(r[i]) for r in rows)) for i in range(len(header))]
+    out = ["```", "  ".join(h.ljust(widths[i]) for i, h in enumerate(header)).rstrip()]
+    out.append("  ".join("-" * w for w in widths))
+    for r in rows:
+        out.append("  ".join(c.ljust(widths[i]) for i, c in enumerate(r)).rstrip())
+    out.append("```")
+    return out
+
+
+def render_slack(r: Report) -> str:
+    """The same week, laid out for a chat channel.
+
+    Deliberately shorter than the markdown file: a channel post that has to be
+    scrolled past every Saturday stops being read. The file keeps the full
+    per-feed and per-source detail; this keeps what changes a decision.
+    """
+    zone = datetime.now(tz()).strftime("%Z") or settings().digest_timezone
+    since_l, until_l = r.since.astimezone(tz()), r.until.astimezone(tz())
+    out: list[str] = []
+    add = out.append
+
+    add(f"*TechTrend Weekly* — week ending {until_l:%A, %d %B %Y}")
+    add(f"_{since_l:%d %b %H:%M} to {until_l:%d %b %H:%M} {zone}_")
+    add("")
+
+    arrow = "+" if r.delta >= 0 else ""
+    add(f"*Ingest* `{r.ingested:,}` articles ({arrow}{r.delta:.1f}% vs prior week)")
+    add(f"• {_pct(r.body_read, r.ingested)}% full text · {r.stories_week:,} new stories")
+    add(f"*Delivery* `{r.posts:,}` stories posted · {len(r.digests)} of 7 digests")
+    live, silent = len(r.sources_live), len(r.sources_silent)
+    add(f"*Sources* `{live}` of {live + silent} publishing")
+    add("")
+
+    # The health lines are the reason an operator opens this at all, so they
+    # lead rather than sit under the volume figures.
+    alerts: list[str] = []
+    if r.endpoints_dropped:
+        alerts.append(
+            f"`{len(r.endpoints_dropped)}` feeds past the retry ceiling — nothing retries them"
+        )
+    if r.endpoints_failing:
+        worst = max(r.endpoints_failing, key=lambda e: e.failure_streak)
+        alerts.append(
+            f"`{len(r.endpoints_failing)}` feeds failing (worst: {worst.name}, "
+            f"{worst.failure_streak}/10)"
+        )
+    if r.sites_unconfigured:
+        names = ", ".join(s.name for s in r.sites_unconfigured[:4])
+        alerts.append(f"`{len(r.sites_unconfigured)}` sources with no feed configured — {names}")
+    if r.unjudged:
+        stale = f", last ran {r.last_judged:%d %b}" if r.last_judged else ""
+        alerts.append(f"`{r.unjudged:,}` stories unjudged{stale}")
+    if alerts:
+        add("*Needs attention*")
+        for a in alerts:
+            add(f"• {a}")
+        add("")
+
+    if r.topics:
+        add("*Topics*")
+        rows = []
+        for t in r.topics[:8]:
+            if t.created_at >= r.since - timedelta(days=7):
+                chg = "backfill"
+            elif not t.n_prev:
+                chg = "new"
+            else:
+                chg = f"{100.0 * (t.n - t.n_prev) / t.n_prev:+.0f}%"
+            rows.append([t.title[:34], f"{t.n:,}", chg])
+        out.extend(_fixed_table(["Topic", "Matches", "vs prior"], rows))
+        add("")
+
+    if r.top:
+        add("*Most-covered stories*")
+        for i, s in enumerate(r.top[:5], 1):
+            reach = f" · {s.source_count} outlets" if s.source_count > 1 else ""
+            add(f"{i}. {s.title} _({s.site}{reach})_")
+        add("")
+    if r.gated:
+        add(f"_{r.gated} withheld by the content gates._")
+
+    return "\n".join(out).strip()
+
+
+def slack_blocks(r: Report) -> tuple[str, list[dict[str, Any]]]:
+    """(fallback, blocks). Fallback is the push-notification line."""
+    until_l = r.until.astimezone(tz())
+    heading = f"TechTrend Weekly — week ending {until_l:%d %B %Y}"
+    blocks: list[dict[str, Any]] = [
+        {"type": "header", "text": {"type": "plain_text", "text": heading, "emoji": True}}
+    ]
+    # Slack rejects a section over 3000 chars, so the body is packed into as
+    # many sections as it needs rather than truncated. Splits fall on blank
+    # lines so a table never straddles two blocks.
+    body = render_slack(r)
+    parts: list[str] = []
+    cur = ""
+    for para in body.split("\n\n"):
+        if cur and len(cur) + len(para) + 2 > 2900:
+            parts.append(cur)
+            cur = para
+        else:
+            cur = f"{cur}\n\n{para}" if cur else para
+    if cur:
+        parts.append(cur)
+    for chunk in parts:
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": chunk}})
+    return heading, blocks
