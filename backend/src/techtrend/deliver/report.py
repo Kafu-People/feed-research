@@ -134,8 +134,13 @@ _DIGESTS = text("""
      WHERE posted_at >= :since AND posted_at < :until ORDER BY day
 """)
 
+# created_at comes back so the renderer can suppress a week-over-week figure
+# for a topic that did not exist for both weeks. A new topic matches the whole
+# standing corpus on its first pass, so its opening number is a backfill spike,
+# not a week's traffic -- reporting the drop off that spike as a percentage
+# reads as a collapse when it is just the backlog draining.
 _TOPICS = text("""
-    SELECT t.id, t.title, t.subscriber_count,
+    SELECT t.id, t.title, t.subscriber_count, t.created_at,
            count(m.story_id) FILTER (WHERE m.matched_at >= :since
                                        AND m.matched_at < :until) AS n,
            count(m.story_id) FILTER (WHERE m.matched_at >= :prev
@@ -143,7 +148,7 @@ _TOPICS = text("""
            avg(m.match_score) FILTER (WHERE m.matched_at >= :since
                                         AND m.matched_at < :until) AS score
       FROM topics t LEFT JOIN matches m ON m.topic_id = t.id
-     GROUP BY t.id, t.title, t.subscriber_count
+     GROUP BY t.id, t.title, t.subscriber_count, t.created_at
      ORDER BY n DESC, t.title
 """)
 
@@ -413,11 +418,25 @@ def render(r: Report) -> str:
     add("")
     add("| Topic | Matches | Prior | Change | Avg score |")
     add("|---|---|---|---|---|")
+    backfilled = False
     for t in r.topics:
-        chg = "new" if not t.n_prev else f"{100.0 * (t.n - t.n_prev) / t.n_prev:+.0f}%"
+        # A topic born inside either window has no comparable prior week: its
+        # first pass matched the standing corpus, not that week's news.
+        if t.created_at >= r.since - timedelta(days=7):
+            chg, backfilled = "backfill*", True
+        elif not t.n_prev:
+            chg = "new"
+        else:
+            chg = f"{100.0 * (t.n - t.n_prev) / t.n_prev:+.0f}%"
         score = f"{t.score:.3f}" if t.score is not None else "—"
         add(f"| {t.title} | {t.n:,} | {t.n_prev:,} | {chg} | {score} |")
     add("")
+    if backfilled:
+        add(
+            "_*Created inside the comparison window: the figure includes a one-off"
+            " backfill against the standing corpus, so it is not a weekly rate._"
+        )
+        add("")
 
     add("## Most-covered stories")
     add("")

@@ -117,3 +117,32 @@ def test_gating_happens_before_the_cut_not_after() -> None:
 def test_keep_limit_is_honoured() -> None:
     kept, _ = R._gated_top([_row(f"Story {i}") for i in range(50)], keep=10)
     assert len(kept) == 10
+
+
+# -------------------------------------------------- week-over-week honesty
+
+
+def _topic(created: datetime, n: int, n_prev: int) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=1, title="T", subscriber_count=1, created_at=created, n=n, n_prev=n_prev, score=0.5
+    )
+
+
+def _topics_table(rows: list[SimpleNamespace]) -> str:
+    since, until = R.week_window(_utc(2026, 9, 5, 20, 16))
+    r = R.Report(since=since, until=until, topics=rows)
+    return R.render(r)
+
+
+def test_topic_created_inside_the_window_is_not_given_a_percentage() -> None:
+    """A topic backfills against the standing corpus on its first pass. Calling
+    the drop off that spike '-91%' reports a collapse that never happened."""
+    out = _topics_table([_topic(datetime(2026, 8, 24, tzinfo=UTC), 5, 56)])
+    assert "backfill*" in out
+    assert "-91%" not in out
+
+
+def test_established_topic_still_gets_its_percentage() -> None:
+    out = _topics_table([_topic(datetime(2026, 7, 1, tzinfo=UTC), 1132, 1000)])
+    assert "+13%" in out
+    assert "backfill*" not in out
