@@ -114,7 +114,7 @@ def seed_demo_cmd(
 
 @app.command("seed-topics")
 def seed_topics_cmd(email: str = "demo@example.com") -> None:
-    """Create the ten hand-written topics and subscribe a user to all of them."""
+    """Create the hand-written topics and subscribe a user to all of them."""
     bootstrap()
     from sqlalchemy import select
 

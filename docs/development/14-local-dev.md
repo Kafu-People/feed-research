@@ -133,7 +133,7 @@ production economics and wrong for a five-second edit loop
 | --- | --- |
 | `seed-sites --count 20` | 20 real feed URLs across tiers A/B/C |
 | `seed-corpus <path>` | ~2,000 fixture articles, pre-grouped and pre-judged |
-| `seed-topics` | The 10 hand-written keyword lists from the matching harness |
+| `seed-topics` | The hand-written keyword lists from the matching harness (17 of them) |
 | `seed-user --email me@local` | A user subscribed to 3 topics, with plausible weights |
 
 `seed-corpus` + `seed-topics` + `seed-user` reproduces a realistic dashboard in seconds,

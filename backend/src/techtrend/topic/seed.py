@@ -1,4 +1,4 @@
-"""The ten hand-written keyword lists -- M3's isolation instrument.
+"""The hand-written keyword lists -- M3's isolation instrument.
 
 Hand-written lists isolate the matcher from the (future) distiller: a bad
 feed has exactly one possible cause. These are also perfectly usable topics
@@ -349,5 +349,259 @@ TOPICS: list[SeedTopic] = [
         ],
         "exclude": ["offshore wind", "offshore drilling", "offshore oil"],
         "entities": [],
+    },
+    {
+        # What founders are building and how -- the idea end of the beat, not
+        # the money end (that is the next topic). Lives almost entirely on
+        # Hacker News, Lenny's and the YC blog: over 120 days and 18,971 live
+        # articles, the existing news corpus produced ZERO stories above 0.6
+        # and exactly one above 0.55, because trade press reports funding and
+        # product launches, not idea validation. The new sources carry it --
+        # 11 of the 321 items in one pull of them cleared 0.6.
+        #
+        # `must` is phrases only. "founder" and "startup" are `should`: as
+        # must-terms they matched every story that merely NAMES a founder --
+        # "Investors sue Selena Gomez", "Arm co-founder's AI warning",
+        # "Laboratoria Founder Is Increasing Women in Tech" -- which is a
+        # person, not a playbook. Same for "Y Combinator" and "YC", which on
+        # their own returned YC's partner-hire announcements.
+        #
+        # "accelerator", "incubator", "MVP" and "side project" were probed and
+        # dropped: 16 of "accelerator"'s 19 hits are AI silicon or CERN's
+        # particle accelerator, "MVP" hit nothing real, "incubator" hit a
+        # Photoshop feature, "side project" hit nothing at all.
+        "title": "Startup ideas & founder playbooks",
+        "must": [
+            "startup idea",
+            "startup ideas",
+            "bootstrapped",
+            "bootstrapping",
+            "solo founder",
+            "indie hacker",
+            "product market fit",
+            "founder mode",
+            "early-stage startup",
+            "first customers",
+            "paying customers",
+            "customer discovery",
+            "go to market",
+            "build in public",
+            "ramen profitable",
+            "micro saas",
+            "side business",
+            "niche market",
+        ],
+        "should": [
+            "founder",
+            "founders",
+            "co-founder",
+            "startup",
+            "Y Combinator",
+            "YC",
+            "revenue",
+            "customers",
+            "ARR",
+            "MRR",
+            "SaaS",
+            "growth",
+            "pivot",
+            "idea",
+            "launch",
+            "Europe",
+            "European",
+            "US",
+            "American",
+        ],
+        "exclude": [],
+        # The AND gate: an idea word AND something being built as a business.
+        # Without it "bootstrapped" matched "Nix has a source-bootstrapped
+        # OpenJDK", which is the same word about a compiler.
+        "entities": [
+            "startup",
+            "startups",
+            "founder",
+            "founders",
+            "co-founder",
+            "company",
+            "companies",
+            "business",
+            "product",
+            "customers",
+        ],
+    },
+    {
+        # The money: rounds, funds, and the investors writing the cheques,
+        # across America and Europe.
+        #
+        # Region words are `should`, not `entities`, for the reason topic 18
+        # states and this one re-measures: of the 110 stories this topic puts
+        # above the floor, 46% name a US or European place in title or
+        # description. An AND gate on region would delete the other 54% --
+        # "Wispr raises $280M at $2B valuation" says nothing about where Wispr
+        # is -- to enforce something the source list already enforces, since
+        # Sifted, EU-Startups, UKTN, Maddyness, ArcticStartup, Crunchbase News
+        # and TechCrunch's venture desk are American and European publications.
+        #
+        # Measured across both corpora (19,293 items): 110 above 0.6 -- 87 of
+        # them 0.72/day of the existing corpus, the rest from the new venture
+        # sources -- and a random 35 of those read one false positive (a
+        # Schneier post that used "raised" in its description). That precision
+        # is what earns bare "raises" and "raised" a place in `must` -- they
+        # are broad words, but the entity gate below means they only count
+        # alongside money or a company.
+        "title": "Startup funding & investors",
+        "must": [
+            "venture capital",
+            "seed round",
+            "pre-seed",
+            "Series A",
+            "Series B",
+            "Series C",
+            "Series D",
+            "funding round",
+            "led the round",
+            "term sheet",
+            "limited partner",
+            "angel investor",
+            "venture fund",
+            "spinout",
+            "raises",
+            "raised",
+            "valuation",
+            "oversubscribed",
+            "first close",
+            "closes its fund",
+            "growth round",
+            "down round",
+            "cap table",
+        ],
+        "should": [
+            "million",
+            "billion",
+            "investor",
+            "investors",
+            "startup",
+            "fund",
+            "venture",
+            "portfolio",
+            "VC",
+            "Europe",
+            "European",
+            "US",
+            "American",
+            "London",
+            "Berlin",
+            "Paris",
+            "Silicon Valley",
+            "New York",
+        ],
+        "exclude": [],
+        "entities": [
+            "startup",
+            "startups",
+            "founder",
+            "founders",
+            "investor",
+            "investors",
+            "venture",
+            "fund",
+            "funding",
+            "round",
+            "million",
+            "billion",
+            "valuation",
+            "capital",
+            "backed",
+        ],
+    },
+    {
+        # Sizing a field rather than reporting an event: how big a market is,
+        # who holds what share of it, what it is paying, and where demand is
+        # going.
+        #
+        # This is the hardest of the three to express in keywords, and the
+        # lists say so honestly. Analysis PROSE is not lexically identifiable
+        # -- Benedict Evans files "AI, tools and transformation" and Stratechery
+        # files "Friction and Feedback", and no keyword list reaches either.
+        # What IS identifiable is a market being MEASURED, so the terms are
+        # measurement words, and the topic catches the analysis publications
+        # only when they put a number on something ("Ways to think about token
+        # pricing" scores 0.60 on supply, demand and pricing).
+        #
+        # Dropped after probing: "estimates", "outlook", "revenue growth" and
+        # "market cap" -- they turned the topic into an earnings wire, matching
+        # "Airbnb stock soars 9% on earnings beat" ahead of any field analysis.
+        # "deep dive" (7 hits, all Kingdom Hearts and GTA VI), "vertical" (tab
+        # bars), "moat" and "benchmark" (AI benchmarks) went the same way.
+        "title": "Market & sector analysis",
+        "must": [
+            "market analysis",
+            "market research",
+            "market size",
+            "market share",
+            "market map",
+            "market opportunity",
+            "market leader",
+            "total addressable market",
+            "TAM",
+            "competitive landscape",
+            "unit economics",
+            "business model",
+            "margins",
+            "adoption",
+            "demand",
+            "pricing",
+            "forecast",
+            "analyst",
+            "analysts",
+            "survey",
+            "study finds",
+            "report finds",
+            "spending",
+        ],
+        "should": [
+            "market",
+            "industry",
+            "sector",
+            "category",
+            "growth",
+            "data",
+            "report",
+            "customers",
+            "share",
+            "trend",
+            "revenue",
+            "buyers",
+            "vertical",
+            "incumbents",
+            "fintech",
+            "robotics",
+            "climate tech",
+            "Europe",
+            "European",
+            "US",
+            "American",
+        ],
+        "exclude": [],
+        # The AND gate is what keeps this a MARKET topic. Without it the same
+        # must-terms matched "UNICEF study finds 60% of online child sexual
+        # abuse happens on social media" -- a study, and no market in sight.
+        "entities": [
+            "market",
+            "markets",
+            "industry",
+            "industries",
+            "sector",
+            "sectors",
+            "category",
+            "segment",
+            "economy",
+            "customers",
+            "revenue",
+            "sales",
+            "buyers",
+            "demand",
+            "adoption",
+        ],
     },
 ]

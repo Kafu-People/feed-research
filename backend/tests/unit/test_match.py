@@ -166,10 +166,22 @@ def test_empty_site_ban_list_allows_everything() -> None:
 
 
 def test_banned_publisher_is_not_in_the_seed_list() -> None:
-    """The gate stops serving; removing the seed stops it coming back."""
-    from techtrend.shared.collect.seeds import TECH
+    """The gate stops serving; removing the seed stops it coming back.
 
-    assert not [s for s in TECH if site_blocked(s["domain"], DEFAULT_BLOCK_SITES)]
+    Every group, not just TECH: a banned publisher added to a newer source
+    list would be seeded, fetched and stored, and only stopped at the far end.
+    """
+    from techtrend.shared.collect.seeds import (
+        ANALYSIS,
+        DEV_MARKET,
+        HN_VOICE,
+        TECH,
+        VENTURE,
+        WORK_TREND,
+    )
+
+    seeds = (*TECH, *WORK_TREND, *HN_VOICE, *DEV_MARKET, *VENTURE, *ANALYSIS)
+    assert not [s for s in seeds if site_blocked(s["domain"], DEFAULT_BLOCK_SITES)]
 
 
 def test_block_catches_the_possessive_form() -> None:
@@ -181,3 +193,69 @@ def test_block_catches_the_possessive_form() -> None:
 def test_block_catches_trump_adjacent_brands() -> None:
     assert _blocked("Trump Media posts a $238m quarterly loss") == "trump"
     assert _blocked("Sued over selling Truth Social API access") == "truth social"
+
+
+# ------------------------------------- the startup/venture topics' AND gates
+#
+# These three topics lean on `entities` to stay on their beat, and the terms
+# that make them work are broad enough that the gate is the whole design. A
+# regression here is silent -- the feed just fills with the wrong stories.
+
+
+def _seed_topic(title: str):
+    from techtrend.topic.seed import TOPICS
+
+    return next(t for t in TOPICS if t["title"] == title)
+
+
+def _score(title: str, story_title: str, description: str | None = None) -> float:
+    t = _seed_topic(title)
+    st = searchable(story_title, description, [])
+    score, _ = evaluate(
+        must=t["must"],
+        should=t["should"],
+        exclude=t["exclude"],
+        entities=t["entities"],
+        topic_embedding=None,
+        story=StoryText(text=st.text, embedding=None),
+    )
+    return score
+
+
+def test_startup_ideas_needs_a_business_not_just_the_word() -> None:
+    """'bootstrapped' is a compiler word as often as a founder word."""
+    ideas = "Startup ideas & founder playbooks"
+    assert _score(ideas, "Nix has a source-bootstrapped OpenJDK") == 0.0
+    assert _score(ideas, "I bootstrapped a podcast search engine and got my first customers") > 0.0
+
+
+def test_startup_ideas_ignores_a_story_that_merely_names_a_founder() -> None:
+    """Naming a founder is not a playbook -- which is why 'founder' is a
+    `should` term and cannot qualify a story on its own."""
+    ideas = "Startup ideas & founder playbooks"
+    assert _score(ideas, "Investors sue Selena Gomez over her wellness startup's app") == 0.0
+    assert _score(ideas, "Arm co-founder Hermann Hauser's AI warning") == 0.0
+
+
+def test_funding_topic_does_not_fire_on_any_use_of_raises() -> None:
+    """Bare 'raises' earns its place in `must` only because of the gate."""
+    money = "Startup funding & investors"
+    assert _score(money, "New Android build raises questions about sideloading") == 0.0
+    assert _score(money, "Wispr raises $280M at a $2B valuation") > 0.0
+
+
+def test_market_analysis_requires_a_market() -> None:
+    """A study is not a market. This exact headline matched the ungated list."""
+    analysis = "Market & sector analysis"
+    assert (
+        _score(analysis, "UNICEF study finds 60% of online child sexual abuse is on social media")
+        == 0.0
+    )
+    assert (
+        _score(
+            analysis,
+            "AI data centre optical interconnect market to hit $144bn by 2030",
+            "Analysts forecast a ten-fold rise in demand.",
+        )
+        > 0.0
+    )
