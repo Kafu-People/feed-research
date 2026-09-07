@@ -49,6 +49,31 @@ DEFAULT_BLOCK_TERMS: tuple[str, ...] = (
     "maga",
     "truth social",
     "mar a lago",
+    # South Korea, banned 2026-09-07. Each term checked against 19,187 live
+    # articles first.
+    #
+    # "south korean" is listed separately because the gate matches on word
+    # boundaries: "south korea" does NOT hit "South Korean", the trailing "n"
+    # defeats the lookahead.
+    #
+    # Bare "korea"/"korean" are deliberately NOT here. They would match "North
+    # Korean", a different country, and the 14 articles that hit are Lazarus
+    # and IT-worker security reporting the Cybersecurity topic wants. The cost
+    # is real: ~14 South Korea articles say only "Korean" (a lunar orbiter, the
+    # Kospi) and survive. Under-blocking was chosen over deleting another
+    # country's security coverage, which no later edit can bring back.
+    #
+    # "lg" is safe on word boundaries -- all 68 hits were the company, none
+    # were an abbreviation. "seoul" catches an Android game with the city in
+    # its title; three articles, judged acceptable.
+    "south korea",
+    "south korean",
+    "south koreans",
+    "seoul",
+    "kospi",
+    "sk hynix",
+    "hynix",
+    "lg",
 )
 
 # Publishers we do not carry. Distinct from `sites.opt_out_at`, which records

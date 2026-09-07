@@ -156,3 +156,44 @@ def test_fingerprint_separates_different_topics() -> None:
     a = fingerprint(["AI chip"], [], [], [])
     b = fingerprint(["AI chip"], [], [], ["gaming"])
     assert a != b
+
+
+# --------------------------------------------------- South Korea, 2026-09-07
+
+
+def test_south_korea_is_blocked() -> None:
+    from techtrend.platform.config import settings
+    from techtrend.topic.match import blocked, searchable
+
+    terms = settings().block_terms
+    for title in (
+        "South Korea targets a 2030 Moon landing",
+        "New South Korean 'fake news' law alarms US lawmakers",
+        "SK Hynix to invest $38 billion building memory chip plants",
+        "Save $800 on the LG 65-inch Gallery TV",
+    ):
+        assert blocked(searchable(title, None, []), terms) is not None, title
+
+
+def test_north_korea_survives_the_south_korea_ban() -> None:
+    """A different country. The bare terms "korea"/"korean" are deliberately
+    absent so Lazarus and IT-worker security reporting keeps flowing."""
+    from techtrend.platform.config import settings
+    from techtrend.topic.match import blocked, searchable
+
+    terms = settings().block_terms
+    for title in (
+        "North Korean hackers exploited a Windows zero-day",
+        "North Korean remote IT staffer worked for a US agency, says FBI",
+    ):
+        assert blocked(searchable(title, None, []), terms) is None, title
+
+
+def test_samsung_survives_the_south_korea_ban() -> None:
+    """Kept by explicit operator choice: a Korean company, but the coverage is
+    global phone and chip news rather than a South Korea story."""
+    from techtrend.platform.config import settings
+    from techtrend.topic.match import blocked, searchable
+
+    terms = settings().block_terms
+    assert blocked(searchable("Samsung Galaxy S27 Ultra camera leak", None, []), terms) is None
