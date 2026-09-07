@@ -50,7 +50,7 @@ what makes [invariant #4](../architecture/14-invariants.md) cheap.
 
 | Concern | Choice | Notes |
 | --- | --- | --- |
-| Model | **`claude-opus-5`** via the `anthropic` Python SDK | Judge is the quality-critical, cost-dominant call |
+| Model | **`claude-haiku-4-5`** via the `anthropic` Python SDK | Every stage, by operator decision. Opus is refused at boot; summaries must be Haiku specifically — see [config](11-config.md) |
 | Output shape | **Structured outputs** (`messages.parse()` + Pydantic) | No free-text parsing anywhere in the codebase |
 | Bulk path | **Message Batches API** | 50% cost on the non-urgent tail — see [AI layer](06-ai-layer.md) |
 | Embeddings | pluggable provider behind `shared/read/embed.py` | Model choice is semi-permanent: changing it invalidates grouping, matching, and novelty windows |

@@ -15,8 +15,6 @@ from techtrend.ai.schemas import JudgeResult, TopicDraft
 from techtrend.platform.config import settings
 from techtrend.platform.telemetry import AI_TOKENS, log
 
-MODEL = "claude-opus-5"
-
 _PROMPTS = Path(__file__).parent / "prompts"
 # Loaded once at import. NEVER an f-string: interpolating a date, a story id or
 # a build hash into the system prompt silently kills prompt caching.
@@ -222,7 +220,11 @@ def _render_judge(title: str, body: str, kw: dict[str, object]) -> str:
     )
 
 
-def _observe(stage: str, usage: object, *, model: str = MODEL, effort: str = "-") -> None:
+# `model` has no default on purpose. It used to fall back to a module-level
+# Opus constant, so a call site that forgot the argument would log a model
+# the request never used -- and Opus is banned here, which makes that log
+# line worse than useless.
+def _observe(stage: str, usage: object, *, model: str, effort: str = "-") -> None:
     for field in (
         "input_tokens",
         "output_tokens",

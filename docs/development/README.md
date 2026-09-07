@@ -58,7 +58,7 @@ typed Pydantic model ([AI layer](06-ai-layer.md)).
 | Cache | **Redis 7** | Dashboards, seen sets, rate limiting |
 | Blobs | **S3** (boto3) | Article text and raw HTML |
 | Extraction | `trafilatura`, `selectolax`, `extruct` | JSON-LD first, body fallback |
-| AI | **Claude** via `anthropic` SDK | `claude-opus-5`, structured outputs, Batch API |
+| AI | **Claude** via `anthropic` SDK | `claude-haiku-4-5` on every stage (Opus banned), structured outputs, Batch API |
 | Web | **Next.js** (App Router) + React DOM | First surface to real users; SSR, real anchors, keyboard |
 | App | **React Native** (Expo) + TypeScript | Second surface; one store first, not both |
 | Shared | `packages/core` + generated `api-client` | All non-visual client logic, written once |

@@ -14,8 +14,6 @@ from techtrend.ai.fake import FakeAIClient
 from techtrend.ai.schemas import JudgeResult, TopicDraft
 from techtrend.platform.config import settings
 
-MODEL = "claude-opus-5"
-
 
 class AIClient(Protocol):
     async def judge(self, title: str, body: str, **kw: object) -> JudgeResult: ...

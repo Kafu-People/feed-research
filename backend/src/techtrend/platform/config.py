@@ -9,7 +9,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
@@ -84,6 +84,21 @@ DEFAULT_BLOCK_TERMS: tuple[str, ...] = (
 # Matched on the registrable domain, subdomains included.
 DEFAULT_BLOCK_SITES: tuple[str, ...] = ("bbc.co.uk",)
 
+# Every per-stage model setting, in one place. A module constant, not a class
+# attribute: a leading-underscore attribute on a pydantic model becomes a
+# private attr that the class itself cannot read back, so the test that checks
+# this list is complete could not import it. Tests assert it covers every
+# `ai_*_model` field, which is what stops a stage added later from being
+# silently unguarded.
+AI_MODEL_FIELDS: tuple[str, ...] = (
+    "ai_model",
+    "ai_distill_model",
+    "ai_summary_model",
+    "ai_answer_model",
+    "ai_weekly_model",
+    "ai_digest_model",
+)
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -135,11 +150,12 @@ class Settings(BaseSettings):
     # Summarising runs once per posted story, and it is the most-read output
     # the system produces -- every reader in the channel sees it.
     # Measured 2026-09-01 on live articles against the student-readability
-    # rules in summarize.md: Opus follows them best (mean sentence 17.7 words
-    # vs Haiku's 24.1) but costs $14.66/month against Haiku's $2.13 at 28
+    # rules in summarize.md: Opus followed them best (mean sentence 17.7 words
+    # vs Haiku's 24.1) but cost $14.66/month against Haiku's $2.13 at 28
     # summaries/day. Haiku chosen deliberately -- the gap is real but not worth
-    # 7x. Switch by changing this one line; `_effort_kwargs` and
-    # `_summary_max_tokens` already handle both model families.
+    # 7x, and as of 2026-09-07 the user has settled it: summaries are Haiku,
+    # full stop. `_require_haiku_summaries_and_no_opus` below makes anything
+    # else fail at boot, so this is no longer a one-line switch.
     ai_summary_model: str = "claude-haiku-4-5"
     # Rewriting, not reasoning: the thinking budget buys nothing here, and on
     # Opus it is on by default until told otherwise.
@@ -234,8 +250,9 @@ class Settings(BaseSettings):
     # highest-scoring survive -- a digest of 200 headlines is not a digest.
     digest_max_stories: int = 60
     # Synthesis across the whole day, not a per-article rewrite: this is the
-    # one call that has to decide what actually mattered. Once a day, so even
-    # Opus costs well under a dollar a month.
+    # one call that has to decide what actually mattered. Once a day, so even a
+    # larger model would cost well under a dollar a month -- which is an
+    # argument the Opus ban settles anyway; Sonnet is the only step up left.
     # The weekly roundup and its forecast. Once a week, so even a larger model
     # is pennies -- but the forecast half is the reason to consider one.
     # Ceiling on how many stories are handed to the weekly model. A week is
@@ -268,6 +285,34 @@ class Settings(BaseSettings):
     jwt_secret: SecretStr = SecretStr("dev-secret")
     access_token_ttl_s: int = 900
     refresh_token_ttl_s: int = 90 * 24 * 3600
+
+    @model_validator(mode="after")
+    def _require_haiku_summaries_and_no_opus(self) -> Settings:
+        """Two standing rules, enforced at boot in EVERY environment.
+
+        The user's decision, 2026-09-07: summaries run on Haiku and nothing
+        else, and no stage anywhere runs on Opus. Both were already true by
+        default -- this is what stops an env var quietly undoing them at 3am,
+        which is the whole reason settings are validated at startup.
+
+        `check_production_invariants` was the wrong home: it returns early
+        outside prod, and a local run that bills Opus tokens still bills them.
+
+        Not a Literal on each field, because the model names change faster
+        than this rule does -- the rule is about a family, not an id.
+        """
+        for field in AI_MODEL_FIELDS:
+            model = str(getattr(self, field, "") or "")
+            if "opus" in model.lower():
+                raise ValueError(
+                    f"{field}={model!r}: Opus is banned on this project. "
+                    "Every stage runs on Haiku (see ai_summary_model)."
+                )
+        if "haiku" not in self.ai_summary_model.lower():
+            raise ValueError(
+                f"ai_summary_model={self.ai_summary_model!r}: summaries are Haiku only."
+            )
+        return self
 
     @property
     def sync_database_url(self) -> str:

@@ -18,7 +18,17 @@ AI spend scales with stories/day, not with users.
 
 ## Model
 
-**`claude-opus-5`** for both calls.
+**`claude-haiku-4-5`** on every stage — judge, distill, summarize, answer, digest, weekly.
+Operator decision (2026-09-02, tightened 2026-09-07): **Opus is banned project-wide**, and
+summaries must be Haiku specifically. Both rules are enforced in `Settings` and fail at
+**boot**, in every environment, so an env var cannot undo them — see
+[config](11-config.md).
+
+The table below describes the **Opus family**, which no longer runs here. It is kept because
+it is why `_effort_kwargs` and `_max_tokens` in `ai/claude.py` branch on model family at all:
+Haiku 4.5 returns a 400 for `output_config.effort` and takes `budget_tokens` for thinking,
+where the Opus family is the opposite. Anything below marked as Opus behaviour is history and
+a description of the other branch, not a description of what this system does today.
 
 | Property | Value | Consequence for us |
 | --- | --- | --- |
@@ -31,7 +41,7 @@ AI spend scales with stories/day, not with users.
 | Batch API | 50% cost | The main cost lever after one-call-per-story |
 
 > ⚠️ **`max_tokens` caps thinking *plus* response text.** Thinking is on by default on
-> `claude-opus-5`, so a `max_tokens` sized around the JSON output alone will truncate
+> the Opus family, so a `max_tokens` sized around the JSON output alone will truncate
 > mid-answer. Every call below sets `max_tokens=16000` for a response that is typically
 > well under 1K — the headroom is for thinking, not for output.
 
@@ -89,7 +99,9 @@ import anthropic
 from techtrend.platform.config import settings
 from techtrend.platform import telemetry
 
-MODEL = "claude-opus-5"
+# No module-level MODEL constant: every call reads its stage's setting from
+# `settings()`, and the telemetry helper takes the model explicitly so a log
+# line cannot name a model the request never used.
 
 class AIClient:
     def __init__(self) -> None:
@@ -135,8 +147,9 @@ async def _judge_now(self, story, articles, prior_facts) -> JudgeResult:
 
 ### Handle refusals — this is not hypothetical for a news app
 
-`claude-opus-5` ships with elevated cybersecurity safeguards, and a declined request
-returns **HTTP 200** with `stop_reason: "refusal"` and an empty or partial `content` array.
+Any model can decline. A declined request returns **HTTP 200** with
+`stop_reason: "refusal"` and an empty or partial `content` array — the Opus family ships the
+most aggressive cybersecurity safeguards, but Haiku refuses too, and the handling is identical.
 A news corpus contains security stories; benign coverage of a breach or a CVE can trip a
 classifier. Code that reads `resp.content[0]` unconditionally will break on exactly the
 stories we most want judged.
@@ -276,7 +289,10 @@ been introduced.** That alert is cheap and catches an entire class of cost regre
 | **Judge** | `medium`, sweep down to `low` | Fact extraction and classification against provided source text. `low` and `medium` are unusually strong on this model; the novelty harness ([testing](12-testing.md)) is the arbiter, not intuition |
 | **Distill** | `low` | The 2-second onboarding budget is a product requirement ([journey](../architecture/10-user-journey.md)) |
 
-Do not disable thinking to save latency. On `claude-opus-5`, `thinking: {"type": "disabled"}`
+The effort table above applies to the Opus family only; Haiku 4.5 rejects `effort` with a
+400, which is why `_effort_kwargs` sends it for one family and not the other.
+
+Do not disable thinking to save latency. On the Opus family, `thinking: {"type": "disabled"}`
 has two documented failure modes (internal tags leaking into output; and with tools, calls
 emitted as plain text that silently never run) and is rejected outright at `xhigh`/`max`
 effort. Lowering `effort` is the cheaper, safer lever and gets most of the saving.
