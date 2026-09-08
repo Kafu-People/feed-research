@@ -154,9 +154,14 @@ async def run(job: queue.Job) -> None:
         )
         # Strictly after the ledger write: if this raised before `_RECORD`, the
         # retry would post the card a second time.
-        await _reply_summary(
-            client, channel, ts, story_id=story_id, title=row.title, text_key=row.text_key
-        )
+        #
+        # When summaries are batched, this stage does not call the model at
+        # all -- it leaves `summary_ts` NULL, which is the summarise stage's
+        # work queue. The inline path stays for `ai_summary_batch=false`.
+        if not s.ai_summary_batch:
+            await _reply_summary(
+                client, channel, ts, story_id=story_id, title=row.title, text_key=row.text_key
+            )
         return
 
     # Already announced. A story that has since gained sources earns one

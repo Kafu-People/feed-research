@@ -133,3 +133,53 @@ async def test_fake_client_declines_thin_text() -> None:
 
     assert await FakeAIClient().summarize("T", "short") is None
     assert await FakeAIClient().summarize("T", "x" * 500) is not None
+
+
+# ------------------------------------------- hourly batching (2026-09-08)
+
+
+def test_delay_to_boundary_lands_on_the_hour() -> None:
+    """Cards wait for the interval boundary so an hour's worth post together."""
+    from techtrend.topic.worker import _delay_to_boundary
+
+    # 10:00:00 exactly -> a full hour to the next boundary, never 0, or a
+    # story matched on the hour would post immediately and miss its batch.
+    assert _delay_to_boundary(now=3600.0 * 10) == 3600.0
+    # 10:59:00 -> 60s. The 10:01 story and this one wake in the same claim.
+    assert _delay_to_boundary(now=3600.0 * 10 + 3540) == 60.0
+
+
+def test_interval_zero_restores_immediate_posting(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The old behaviour is still reachable, and is exactly delay 0."""
+    from techtrend.platform.config import settings
+    from techtrend.topic.worker import _delay_to_boundary
+
+    monkeypatch.setenv("TT_SLACK_POST_INTERVAL_HOURS", "0")
+    settings.cache_clear()
+    try:
+        assert _delay_to_boundary(now=1234.5) == 0.0
+    finally:
+        settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_batch_returns_one_entry_per_story() -> None:
+    """The batch path's contract: a mapping keyed by story id, values that may
+    be None. The caller reads `summary_ts IS NULL` as its work queue, so a
+    missing key and a None must both leave the story retryable."""
+    from techtrend.ai.fake import FakeAIClient
+
+    out = await FakeAIClient().summarize_batch(
+        [(1, "Long one", "x" * 500), (2, "Thin one", "short")]
+    )
+    assert set(out) == {1, 2}
+    assert out[1] is not None
+    assert out[2] is None  # declined, and stays unsummarised
+
+
+def test_batch_pending_carries_the_receipt() -> None:
+    """A batch that outlives the poll is not a failure -- the id is how the
+    follow-up job collects it instead of paying for the work twice."""
+    from techtrend.ai.claude import BatchPending
+
+    assert BatchPending("msgbatch_123").batch_id == "msgbatch_123"

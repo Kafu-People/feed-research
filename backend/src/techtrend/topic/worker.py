@@ -182,12 +182,34 @@ async def _maybe_notify(
         return
     # source_count in the key: a story that gains a source earns exactly one
     # threaded follow-up per new count, and re-running match never re-posts.
+    #
+    # Delayed to the next interval boundary rather than run now, so an hour's
+    # cards land together and the summariser gets a batch instead of a
+    # trickle. The delay is on the JOB, not in a scheduler: the queue already
+    # has `run_after`, and a story matched at 10:59 and one matched at 10:01
+    # then wake up in the same claim.
     await queue.enqueue(
         "notify",
         f"notify:story:{story_id}:{source_count}",
         {"story_id": story_id},
+        delay_s=_delay_to_boundary(),
         session=session,
     )
+
+
+def _delay_to_boundary(now: float | None = None) -> float:
+    """Seconds until the next posting boundary, or 0 when posting immediately.
+
+    An interval of 1 hour lands on the hour, 0.5 on the half hour. Returns 0
+    for interval 0, which restores the original post-on-match behaviour.
+    """
+    import time as _time
+
+    interval_s = settings().slack_post_interval_hours * 3600.0
+    if interval_s <= 0:
+        return 0.0
+    t = _time.time() if now is None else now
+    return interval_s - (t % interval_s)
 
 
 async def _backfill_topic(topic_id: int) -> None:

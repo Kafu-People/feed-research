@@ -55,6 +55,16 @@ class FakeAIClient:
             return None  # mirrors the real client's SKIP on thin extraction
         return f"{title.rstrip('.')}. In plain terms, this is what the coverage says."
 
+    async def summarize_batch(self, items: list[tuple[int, str, str]]) -> dict[int, str | None]:
+        """Same rule as `summarize`, applied per item. Deterministic, offline,
+        and it returns the SHAPE the batch path has to handle: a mapping that
+        may be missing keys and may hold None."""
+        return {sid: await self.summarize(title, body) for sid, title, body in items}
+
+    async def collect_batch(self, batch_id: str) -> dict[int, str | None]:
+        """Nothing is ever left pending offline."""
+        return {}
+
     async def digest(self, headlines: str) -> str:
         n = len([ln for ln in headlines.splitlines() if ln.strip().startswith(("1", "2", "3"))])
         return f"A steady day across the feed.\n\n\u2022 `{n}` stories carried, mostly routine."

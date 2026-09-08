@@ -409,6 +409,12 @@ async def _maintenance(job: queue.Job) -> None:
         telemetry.log.info("jobs.purged", count=purged)
 
 
+async def _summarize(job: queue.Job) -> None:
+    from techtrend.deliver import summarize as summarize_worker
+
+    await summarize_worker.run(job)
+
+
 HANDLERS = {
     "collect": _collect,
     "read": _read,
@@ -418,6 +424,7 @@ HANDLERS = {
     "feedback": _feedback,
     "notify": _notify,
     "digest": _digest,
+    "summarize": _summarize,
     "maintenance": _maintenance,
 }
 
@@ -436,6 +443,19 @@ async def _sweep_maintenance() -> None:
     """
     bucket = int(time.time()) // settings().maintenance_interval_s
     await queue.enqueue("maintenance", f"maintenance:{bucket}", priority=PRIORITY_BACKFILL)
+
+
+async def _sweep_summarize() -> None:
+    """Enqueue one summarise job per posting interval. Nothing else will.
+
+    Same time-bucket key as `_sweep_maintenance`, for the same reason: many
+    loop iterations and many workers all try, and only the first insert wins.
+    The bucket is the posting interval, so the batch is submitted just after
+    the interval's cards have gone out.
+    """
+    interval_s = max(60.0, settings().slack_post_interval_hours * 3600.0)
+    bucket = int(time.time() // interval_s)
+    await queue.enqueue("summarize", f"summarize:{bucket}", priority=PRIORITY_BACKFILL)
 
 
 async def _sweep_digest() -> None:
@@ -483,6 +503,7 @@ async def _run_worker(stages: list[str], concurrency: int) -> None:
 
     do_maintenance = "maintenance" in stages
     do_digest = "digest" in stages
+    do_summarize = "summarize" in stages
 
     while not stop.is_set():
         if sweep is not None:
@@ -492,6 +513,8 @@ async def _run_worker(stages: list[str], concurrency: int) -> None:
             await _sweep_maintenance()
         if do_digest:
             await _sweep_digest()
+        if do_summarize:
+            await _sweep_summarize()
         jobs = await queue.claim(stages, batch=concurrency)
         if not jobs:
             # Graceful shutdown: stop claiming, let in-flight jobs finish.

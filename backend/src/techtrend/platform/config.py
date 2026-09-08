@@ -227,6 +227,46 @@ class Settings(BaseSettings):
     slack_topic_floors: dict[int, float] = Field(default_factory=dict)
     # A backlog is not news. Nothing older than this is ever announced.
     slack_max_age_hours: float = 24.0
+    # Posting cadence. 0 posts a card the moment its story matches -- the
+    # original behaviour. Above 0, a matched story's notify job is delayed to
+    # the next interval boundary, so an interval's cards land together.
+    #
+    # Two reasons, and the second is the expensive one. It is quieter in the
+    # channel, and it gives the summariser a BATCH to work on: an hour's
+    # stories go to the model as one Message Batches submission at 50% off,
+    # instead of N live calls at full price. Measured 2026-09-08 over 14 days:
+    # 2.2 posts in an average active hour, so an hour is the shortest interval
+    # that batches anything at all -- 45% of active hours carry exactly one.
+    slack_post_interval_hours: float = 1.0
+    # Summaries through the Message Batches API rather than one live call per
+    # story. Asynchronous: the card posts on the hour, the summary threads
+    # under it when the batch returns (minutes, not hours, at this size).
+    # False restores the inline call, which is what the notify stage does when
+    # it sees this off.
+    ai_summary_batch: bool = True
+    # How long the summarise job waits on its own batch before handing the
+    # batch id to a follow-up job. Well inside `job_lease_minutes` (15) so the
+    # lease cannot expire under a poll that is still running.
+    ai_batch_max_wait_s: float = 480.0
+    ai_batch_poll_s: float = 10.0
+    # Ceiling on one submission. The backlog this shipped with was 77 posts;
+    # a cap keeps the first run from being unbounded.
+    ai_summary_batch_max: int = 100
+    # How far back the summarise stage will reach for a card that still has no
+    # summary. Wider than one interval on purpose -- a batch that fails, or a
+    # stage that was off, leaves work behind and this is what picks it up.
+    #
+    # NOT unbounded, for the reason the notify stage bounds its own age: a
+    # stage switched back on must not thread a month of summaries into the
+    # channel. The 78-post backlog this shipped with spanned 30 days; the
+    # older 28 were done once by hand rather than by widening this.
+    slack_summary_max_age_hours: float = 168.0
+    # How many times a card may be sent to the summariser before it is left
+    # alone. The model's own SKIP hatch fires on paywall stubs and nav menus
+    # -- about a third of the first backlog -- and nothing about that is
+    # retryable, so without a cap those stories would be re-submitted every
+    # hour for a week and cost more than the batch discount saves.
+    slack_summary_max_attempts: int = 2
     slack_timeout_s: float = 15.0
     # Post a plain-language summary as a threaded reply under each card.
     # Costs one Haiku call per story; set false to stop spending entirely.
