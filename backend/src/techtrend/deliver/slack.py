@@ -195,9 +195,17 @@ def _trunc(s: str, n: int) -> str:
     return s if len(s) <= n else s[: n - 1].rstrip() + "…"
 
 
-def _decode(s: str) -> str:
-    """Publisher titles arrive with HTML entities intact: `Here&#8217;s`."""
+def decode_title(s: str) -> str:
+    """Publisher titles arrive with HTML entities intact: `Here&#8217;s`.
+
+    Public because the hourly report builds its own link text and needs the
+    same decode; a second copy of `html.unescape` is how one surface quietly
+    starts shipping `&amp;#8217;` while the other does not.
+    """
     return html.unescape(s)
+
+
+_decode = decode_title
 
 
 def _esc_only(s: str) -> str:

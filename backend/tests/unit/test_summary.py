@@ -183,3 +183,78 @@ def test_batch_pending_carries_the_receipt() -> None:
     from techtrend.ai.claude import BatchPending
 
     assert BatchPending("msgbatch_123").batch_id == "msgbatch_123"
+
+
+# ------------------------------------------- the hourly report (2026-09-08)
+
+
+class _Row:
+    """The columns `_render` reads. A namespace, not a model -- the query
+    returns a row, and the renderer must not care which."""
+
+    def __init__(self, **kw: object) -> None:
+        self.__dict__.update(
+            {
+                "id": 1,
+                "title": "T",
+                "url": "https://e.com/a",
+                "site": "Example",
+                "source_count": 1,
+                "topic_ids": [3],
+                "topic_titles": ["AI models & labs"],
+                "scores": [0.8],
+                **kw,
+            }
+        )
+
+
+def test_report_decodes_entities_before_escaping() -> None:
+    """A title arrives as `Here&#8217;s`. Escaping that without decoding first
+    ships a literal `&amp;#8217;` -- the trap slack.py's `_esc` documents."""
+    from datetime import UTC, datetime
+
+    from techtrend.deliver.hourly import _render
+
+    now = datetime.now(UTC)
+    _, blocks = _render([_Row(title="Here&#8217;s the news &mdash; really")], {1: "S."}, now, now)
+    body = "".join(b["text"]["text"] for b in blocks if b["type"] == "section")
+    assert "&#8217;" not in body
+    assert "&mdash;" not in body
+    assert "Here\u2019s the news \u2014 really" in body
+
+
+def test_report_link_text_cannot_break_slack_markup() -> None:
+    """A bare | or > inside <url|text> ends the link early."""
+    from datetime import UTC, datetime
+
+    from techtrend.deliver.hourly import _render
+
+    now = datetime.now(UTC)
+    _, blocks = _render([_Row(title="A | B > C")], {1: "S."}, now, now)
+    link = [b for b in blocks if b["type"] == "section"][0]["text"]["text"]
+    assert "A ❘ B &gt; C" in link
+
+
+def test_report_carries_the_summary_under_the_link() -> None:
+    """The whole point of the format: link and summary in one message."""
+    from datetime import UTC, datetime
+
+    from techtrend.deliver.hourly import _render
+
+    now = datetime.now(UTC)
+    _, blocks = _render([_Row()], {1: "The plain-language version."}, now, now)
+    body = [b for b in blocks if b["type"] == "section"][0]["text"]["text"]
+    assert "https://e.com/a" in body
+    assert "The plain-language version." in body
+
+
+def test_report_survives_a_story_with_no_summary() -> None:
+    """A declined summary loses the prose, never the link."""
+    from datetime import UTC, datetime
+
+    from techtrend.deliver.hourly import _render
+
+    now = datetime.now(UTC)
+    _, blocks = _render([_Row()], {}, now, now)
+    body = [b for b in blocks if b["type"] == "section"][0]["text"]["text"]
+    assert "https://e.com/a" in body

@@ -409,6 +409,12 @@ async def _maintenance(job: queue.Job) -> None:
         telemetry.log.info("jobs.purged", count=purged)
 
 
+async def _hourly(job: queue.Job) -> None:
+    from techtrend.deliver import hourly as hourly_worker
+
+    await hourly_worker.run(job)
+
+
 async def _summarize(job: queue.Job) -> None:
     from techtrend.deliver import summarize as summarize_worker
 
@@ -425,6 +431,7 @@ HANDLERS = {
     "notify": _notify,
     "digest": _digest,
     "summarize": _summarize,
+    "hourly": _hourly,
     "maintenance": _maintenance,
 }
 
@@ -443,6 +450,20 @@ async def _sweep_maintenance() -> None:
     """
     bucket = int(time.time()) // settings().maintenance_interval_s
     await queue.enqueue("maintenance", f"maintenance:{bucket}", priority=PRIORITY_BACKFILL)
+
+
+async def _sweep_hourly() -> None:
+    """Enqueue one report job per interval, a few minutes PAST the boundary.
+
+    The offset is the whole point. Without it this sweep and the interval's own
+    work fire on the same tick, and the report is assembled from a window whose
+    last stories have not finished matching yet -- which is exactly how three
+    cards went out at 17:00 with no summary under them.
+    """
+    interval_s = max(60.0, settings().slack_post_interval_hours * 3600.0)
+    offset_s = min(settings().hourly_offset_s, interval_s / 2)
+    bucket = int((time.time() - offset_s) // interval_s)
+    await queue.enqueue("hourly", f"hourly:{bucket}", priority=PRIORITY_BACKFILL)
 
 
 async def _sweep_summarize() -> None:
@@ -504,6 +525,7 @@ async def _run_worker(stages: list[str], concurrency: int) -> None:
     do_maintenance = "maintenance" in stages
     do_digest = "digest" in stages
     do_summarize = "summarize" in stages
+    do_hourly = "hourly" in stages
 
     while not stop.is_set():
         if sweep is not None:
@@ -515,6 +537,8 @@ async def _run_worker(stages: list[str], concurrency: int) -> None:
             await _sweep_digest()
         if do_summarize:
             await _sweep_summarize()
+        if do_hourly:
+            await _sweep_hourly()
         jobs = await queue.claim(stages, batch=concurrency)
         if not jobs:
             # Graceful shutdown: stop claiming, let in-flight jobs finish.

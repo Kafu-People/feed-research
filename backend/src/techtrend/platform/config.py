@@ -244,6 +244,31 @@ class Settings(BaseSettings):
     # False restores the inline call, which is what the notify stage does when
     # it sees this off.
     ai_summary_batch: bool = True
+    # How the channel is written to.
+    #
+    #   "cards"  -- one message per story, summary threaded under it. Each
+    #               story gets its own thread, which is what the Q&A listener
+    #               answers in and where a source-count follow-up lands.
+    #   "hourly" -- ONE message an hour carrying every story that hour matched,
+    #               each with its link and its summary inline. Chosen by the
+    #               operator 2026-09-08: 2.2 stories an hour was producing ~4.4
+    #               messages an hour in cards mode, with each summary detached
+    #               from the headline it belonged to.
+    #
+    # "hourly" costs the per-story thread, and with it the Q&A listener's only
+    # place to answer and the follow-up's only place to land. That is the
+    # trade, stated here so it is not rediscovered as a bug.
+    slack_delivery_mode: Literal["cards", "hourly"] = "hourly"
+    # Ceiling on one report. A quiet hour posts what it has; a burst hour is
+    # trimmed to the highest-scoring, because a Slack message has a block limit
+    # and a reader has a scroll limit.
+    hourly_max_stories: int = 25
+    # How long after the interval boundary the report is assembled. Matching
+    # for the stories that arrived at :59 has to finish first; at 17:00 on
+    # 2026-09-08 it had not, and the hour reported three stories with nothing
+    # under them. Clamped to half the interval so a short interval cannot
+    # schedule its report into the next one.
+    hourly_offset_s: float = 240.0
     # How long the summarise job waits on its own batch before handing the
     # batch id to a follow-up job. Well inside `job_lease_minutes` (15) so the
     # lease cannot expire under a poll that is still running.

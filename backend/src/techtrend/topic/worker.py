@@ -173,6 +173,10 @@ async def _maybe_notify(
 
     if not configured():
         return
+    # In hourly mode the report job reads `matches` itself, so a per-story
+    # notify job would be a queue row that posts nothing.
+    if settings().slack_delivery_mode == "hourly":
+        return
     watched = set(settings().slack_topic_ids)
     qualifies = any(
         r["score"] >= floor_for(r["topic_id"]) and (not watched or r["topic_id"] in watched)
