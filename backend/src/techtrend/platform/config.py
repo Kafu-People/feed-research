@@ -272,7 +272,15 @@ class Settings(BaseSettings):
     # How long the summarise job waits on its own batch before handing the
     # batch id to a follow-up job. Well inside `job_lease_minutes` (15) so the
     # lease cannot expire under a poll that is still running.
-    ai_batch_max_wait_s: float = 480.0
+    # A SHORT in-job wait, because the queue is the better place to wait.
+    # Measured on three consecutive ten-request batches: 2 minutes, 8 minutes,
+    # 40 minutes. No in-job wait is both cheap and sufficient, so this covers
+    # only the fast case and `ai_batch_max_polls` covers the rest.
+    ai_batch_max_wait_s: float = 90.0
+    # How many times a follow-up job re-checks a batch before giving up. At
+    # ai_batch_poll_s * 6 per hop that is patience measured in hours, which
+    # the 40-minute batch says is the right order.
+    ai_batch_max_polls: int = 40
     ai_batch_poll_s: float = 10.0
     # Ceiling on one submission. The backlog this shipped with was 77 posts;
     # a cap keeps the first run from being unbounded.

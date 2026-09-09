@@ -258,3 +258,63 @@ def test_report_survives_a_story_with_no_summary() -> None:
     _, blocks = _render([_Row()], {}, now, now)
     body = [b for b in blocks if b["type"] == "section"][0]["text"]["text"]
     assert "https://e.com/a" in body
+
+
+def test_slow_batch_is_rescheduled_not_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A batch that is merely slow must not spend the queue's error retries.
+
+    On 2026-09-08 a 40-minute batch raised BatchPending out of the collect
+    job five times and succeeded on the last attempt allowed -- a report
+    already paid for, one delay from being dropped. The collect path now
+    checks status once and re-enqueues itself.
+    """
+    import asyncio
+
+    from techtrend.deliver import hourly
+
+    enqueued: list[tuple[str, str, dict]] = []
+
+    class _Never:
+        async def batch_ended(self, batch_id: str) -> bool:
+            return False
+
+        async def read_batch(self, batch_id: str) -> dict:
+            raise AssertionError("must not read a batch that has not ended")
+
+    async def _fake_enqueue(stage, key, payload=None, **kw):
+        enqueued.append((stage, key, payload or {}))
+        return True
+
+    monkeypatch.setattr(hourly, "ai_client", lambda: _Never())
+    monkeypatch.setattr(hourly.queue, "enqueue", _fake_enqueue)
+
+    asyncio.run(hourly._collect("msgbatch_x", {"tries": 1, "story_ids": [1]}, "#c"))
+    assert len(enqueued) == 1
+    stage, key, payload = enqueued[0]
+    assert stage == "hourly"
+    assert key.endswith(":2")  # a NEW key, or ON CONFLICT would swallow it
+    assert payload["tries"] == 2
+
+
+def test_batch_polling_gives_up_eventually(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bounded patience: a batch that never ends must not reschedule forever."""
+    import asyncio
+
+    from techtrend.deliver import hourly
+    from techtrend.platform.config import settings
+
+    enqueued: list = []
+
+    class _Never:
+        async def batch_ended(self, batch_id: str) -> bool:
+            return False
+
+    async def _fake_enqueue(*a, **kw):
+        enqueued.append(a)
+        return True
+
+    monkeypatch.setattr(hourly, "ai_client", lambda: _Never())
+    monkeypatch.setattr(hourly.queue, "enqueue", _fake_enqueue)
+    cap = settings().ai_batch_max_polls
+    asyncio.run(hourly._collect("msgbatch_x", {"tries": cap, "story_ids": [1]}, "#c"))
+    assert enqueued == []

@@ -201,8 +201,20 @@ class ClaudeClient:
         log.info("ai.batch_submitted", stage="summarize", batch_id=batch.id, n=len(requests))
         return await self.collect_batch(batch.id)
 
+    async def batch_ended(self, batch_id: str) -> bool:
+        """One status check, no waiting.
+
+        Separate from `collect_batch` because a follow-up job must not hold a
+        worker slot asleep. Measured 2026-09-08: batches of ten small requests
+        ended in 2 minutes, 8 minutes and 40 minutes on three consecutive
+        runs, so there is no wait length that is both short enough to be free
+        and long enough to be sufficient. The queue does the waiting instead.
+        """
+        batch = await self._c.messages.batches.retrieve(batch_id)
+        return bool(batch.processing_status == "ended")
+
     async def collect_batch(self, batch_id: str) -> dict[int, str | None]:
-        """Wait for a submitted batch and read its results.
+        """Wait a bounded time for a submitted batch, then read its results.
 
         Raises `BatchPending` rather than returning a partial mapping when the
         wait runs out -- a partial mapping is indistinguishable from "these
@@ -210,14 +222,15 @@ class ClaudeClient:
         """
         s = settings()
         deadline = asyncio.get_running_loop().time() + s.ai_batch_max_wait_s
-        while True:
-            batch = await self._c.messages.batches.retrieve(batch_id)
-            if batch.processing_status == "ended":
-                break
+        while not await self.batch_ended(batch_id):
             if asyncio.get_running_loop().time() >= deadline:
                 raise BatchPending(batch_id)
             await asyncio.sleep(s.ai_batch_poll_s)
+        return await self.read_batch(batch_id)
 
+    async def read_batch(self, batch_id: str) -> dict[int, str | None]:
+        """Read an ENDED batch's results. Never waits."""
+        s = settings()
         out: dict[int, str | None] = {}
         results = await self._c.messages.batches.results(batch_id)
         async for entry in results:

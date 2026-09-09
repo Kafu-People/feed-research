@@ -158,8 +158,30 @@ async def run(job: queue.Job) -> None:
 
 
 async def _collect(batch_id: str, payload: dict, channel: str) -> None:
-    """Finish a report whose batch outlived the poll."""
-    summaries = await ai_client().collect_batch(batch_id)
+    """Finish a report whose batch outlived the poll.
+
+    Checks status ONCE and reschedules itself if the batch is still running.
+    It used to call the blocking `collect_batch`, which raised `BatchPending`
+    out of the job -- so a slow batch read as a job failure, retried on the
+    queue's error backoff, and burned its five attempts. On 2026-09-08 a
+    40-minute batch succeeded on the fifth and last one: a report that had
+    already been paid for was one delay away from dead-lettering.
+    """
+    s = settings()
+    if not await ai_client().batch_ended(batch_id):
+        tries = int(payload.get("tries", 1))
+        if tries >= s.ai_batch_max_polls:
+            telemetry.log.warning("hourly.batch_abandoned", batch_id=batch_id, tries=tries)
+            return
+        await queue.enqueue(
+            "hourly",
+            f"hourly:collect:{batch_id}:{tries + 1}",
+            {**payload, "tries": tries + 1},
+            delay_s=s.ai_batch_poll_s * 6,
+        )
+        return
+
+    summaries = await ai_client().read_batch(batch_id)
     ids = [int(i) for i in payload.get("story_ids", [])]
     async with session_scope() as sess:
         rows = list((await sess.execute(_BY_IDS, {"ids": ids})).all())

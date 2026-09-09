@@ -65,6 +65,12 @@ class FakeAIClient:
         """Nothing is ever left pending offline."""
         return {}
 
+    async def batch_ended(self, batch_id: str) -> bool:
+        return True
+
+    async def read_batch(self, batch_id: str) -> dict[int, str | None]:
+        return {}
+
     async def digest(self, headlines: str) -> str:
         n = len([ln for ln in headlines.splitlines() if ln.strip().startswith(("1", "2", "3"))])
         return f"A steady day across the feed.\n\n\u2022 `{n}` stories carried, mostly routine."

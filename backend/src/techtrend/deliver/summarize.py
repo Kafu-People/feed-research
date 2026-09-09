@@ -69,8 +69,24 @@ async def run(job: queue.Job) -> None:
         return
 
     # A follow-up job: the batch was submitted, the poll ran out of patience.
+    # A follow-up job: the batch was submitted, the poll ran out of patience.
+    # Status is checked ONCE -- a blocking poll here raised out of the job and
+    # spent the queue's error retries on a batch that was merely slow.
     if batch_id := job.payload.get("batch_id"):
-        await _deliver(await ai_client().collect_batch(str(batch_id)), batch_id=str(batch_id))
+        bid = str(batch_id)
+        if not await ai_client().batch_ended(bid):
+            tries = int(job.payload.get("tries", 1))
+            if tries >= s.ai_batch_max_polls:
+                telemetry.log.warning("summarize.batch_abandoned", batch_id=bid, tries=tries)
+                return
+            await queue.enqueue(
+                "summarize",
+                f"summarize:collect:{bid}:{tries + 1}",
+                {"batch_id": bid, "tries": tries + 1},
+                delay_s=s.ai_batch_poll_s * 6,
+            )
+            return
+        await _deliver(await ai_client().read_batch(bid), batch_id=bid)
         return
 
     async with session_scope() as sess:
