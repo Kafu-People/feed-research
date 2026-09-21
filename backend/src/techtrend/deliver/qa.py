@@ -19,14 +19,21 @@ from techtrend.platform.config import settings
 from techtrend.platform.db import session_scope
 
 # A thread's parent ts is the card's ts, which is how a mention finds its story.
-_STORY_FOR_THREAD = text("""
-    SELECT st.id, a.title, a.text_key
+# MANY rows, not one. In cards mode a `ts` is one story's card; in hourly mode
+# it is the report, and every story in that hour shares it. This used to be
+# read with `.one_or_none()`, which raises MultipleResultsFound on a report --
+# so every question asked under an hourly report died before reaching the
+# model. Ordered so the context is stable between two askings of the same
+# question.
+_STORIES_FOR_THREAD = text("""
+    SELECT st.id, a.title, a.text_key, s.name AS site
       FROM slack_posts p
       JOIN stories st ON st.id = p.story_id
       JOIN articles a ON a.id = st.display_article_id
       JOIN sites s ON s.id = a.site_id
      WHERE p.ts = :ts
        AND s.opt_out_at IS NULL
+     ORDER BY st.source_count DESC, st.id
 """)
 
 _MENTION = re.compile(r"<@[A-Z0-9]+>")
@@ -93,23 +100,23 @@ async def handle_mention(
             return
 
         async with session_scope() as sess:
-            row = (await sess.execute(_STORY_FOR_THREAD, {"ts": thread_ts})).one_or_none()
-        if row is None:
+            rows = (await sess.execute(_STORIES_FOR_THREAD, {"ts": thread_ts})).all()
+        if not rows:
             await client.post(channel, NOT_A_STORY_THREAD, thread_ts=thread_ts)
             return
 
-        body = ""
-        if row.text_key:
-            raw = await asyncio.to_thread(blobs.get, row.text_key)
-            body = raw.decode("utf-8", "replace")[: s.slack_qa_max_body_chars]
+        title, body = await _context(rows, budget=s.slack_qa_max_body_chars)
 
         msgs = await client.replies(channel, thread_ts, limit=s.slack_qa_max_thread_msgs)
         thread = render_thread(msgs, bot_id=bot_id, skip_ts=ts)
 
-        reply = await ai_client().answer(question, row.title, body, thread)
+        reply = await ai_client().answer(question, title, body, thread)
         await client.post(channel, to_mrkdwn(reply), thread_ts=thread_ts)
         telemetry.log.info(
-            "qa.answered", story_id=row.id, chars=len(reply), question_chars=len(question)
+            "qa.answered",
+            story_ids=[r.id for r in rows],
+            chars=len(reply),
+            question_chars=len(question),
         )
     except Exception:  # noqa: BLE001 - one bad question must not kill the listener
         telemetry.log.exception("qa.failed", thread_ts=thread_ts)
@@ -121,3 +128,38 @@ async def handle_mention(
             )
         except Exception:  # noqa: BLE001 - Slack itself may be the failure
             telemetry.log.exception("qa.failed_to_report", thread_ts=thread_ts)
+
+
+async def _context(rows: list, *, budget: int) -> tuple[str, str]:
+    """(title, body) for the model, whether the thread is one story or a report.
+
+    One story keeps exactly the old shape -- cards mode must not change. A
+    report gets every story it carried, each labelled, with the body budget
+    split between them: a question under a report is as often "which of these
+    matters" as it is about one of them, so the titles all have to be present
+    even when there is no room for much text under each.
+    """
+    if len(rows) == 1:
+        return rows[0].title, await _body(rows[0], budget)
+
+    share = max(400, budget // len(rows))
+    parts = []
+    for i, r in enumerate(rows, 1):
+        text_ = await _body(r, share)
+        parts.append(f"[{i}] {r.title} ({r.site})" + (f"\n{text_}" if text_ else ""))
+    return f"TechTrend hourly report \u2014 {len(rows)} stories", "\n\n".join(parts)
+
+
+async def _body(row: object, budget: int) -> str:
+    """The stored article text, truncated. Missing blob is not fatal: the
+    title alone still answers some questions, and a dead blob must not turn
+    into a non-answer for every other story in the same report."""
+    key = getattr(row, "text_key", None)
+    if not key:
+        return ""
+    try:
+        raw = await asyncio.to_thread(blobs.get, key)
+    except Exception:  # noqa: BLE001 - one story's text, not the answer
+        telemetry.log.warning("qa.blob_missing", story_id=getattr(row, "id", None))
+        return ""
+    return raw.decode("utf-8", "replace")[:budget]

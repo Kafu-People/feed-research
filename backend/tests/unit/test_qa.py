@@ -24,11 +24,21 @@ class _Spy:
 
 
 def _story(monkeypatch, row: Any) -> None:
-    """Stand in for the thread_ts -> story lookup."""
+    """Stand in for the thread_ts -> stories lookup.
+
+    Takes a row, a list of rows, or None. The lookup returns MANY rows now:
+    in hourly mode one `ts` is a whole report, and reading it with
+    `.one_or_none()` was raising MultipleResultsFound before the model was
+    ever called.
+    """
+    rows = [] if row is None else (list(row) if isinstance(row, list) else [row])
 
     class _Result:
+        def all(self):
+            return rows
+
         def one_or_none(self):
-            return row
+            return rows[0] if rows else None
 
     class _Session:
         async def execute(self, *_a, **_kw):
@@ -42,7 +52,11 @@ def _story(monkeypatch, row: Any) -> None:
 
 
 class _Row:
-    id, title, text_key = 42, "A headline", "text/ab/cd"
+    id, title, text_key, site = 42, "A headline", "text/ab/cd", "Example"
+
+
+class _Row2:
+    id, title, text_key, site = 43, "Another headline", "text/ef/gh", "Other"
 
 
 def _ai(monkeypatch, *, answer: str | Exception = "Because the article says so.") -> None:
@@ -162,3 +176,68 @@ async def test_event_missing_channel_is_ignored() -> None:
     spy = _Spy()
     await qa.handle_mention(spy, {"text": "<@U1> hi"})
     assert spy.posts == []
+
+
+# ------------------------------------- a report thread carries MANY stories
+
+
+@pytest.mark.asyncio
+async def test_question_under_an_hourly_report_is_answered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The regression that broke @techtrend.
+
+    Every story in an hourly report shares the report's `ts`, so the lookup
+    returns N rows. Reading that with `.one_or_none()` raised
+    MultipleResultsFound, and the listener swallowed it as `qa.failed` -- the
+    user saw silence rather than an error.
+    """
+    _story(monkeypatch, [_Row(), _Row2()])
+    _ai(monkeypatch, answer="The chip story matters most.")
+    spy = _Spy()
+    await qa.handle_mention(
+        spy, {"channel": "C1", "ts": "5.0", "thread_ts": "1.0", "text": "<@U1> which matters?"}
+    )
+    assert spy.posts[0]["text"] == "The chip story matters most."
+
+
+@pytest.mark.asyncio
+async def test_report_context_carries_every_headline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A question under a report is as often "which of these" as it is about
+    one of them, so every title has to reach the model."""
+    seen: dict[str, str] = {}
+
+    class _AI:
+        async def answer(self, question: str, title: str, body: str, thread: str) -> str:
+            seen["title"], seen["body"] = title, body
+            return "ok"
+
+    _story(monkeypatch, [_Row(), _Row2()])
+    monkeypatch.setattr(qa, "ai_client", lambda: _AI())
+    monkeypatch.setattr(qa.blobs, "get", lambda _k: b"body text")
+    await qa.handle_mention(
+        spy_ := _Spy(), {"channel": "C1", "ts": "5.0", "thread_ts": "1.0", "text": "<@U1> what?"}
+    )
+    assert spy_.posts
+    assert "2 stories" in seen["title"]
+    assert "A headline" in seen["body"]
+    assert "Another headline" in seen["body"]
+
+
+@pytest.mark.asyncio
+async def test_single_story_context_is_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cards mode must be untouched: one row still sends the bare title."""
+    seen: dict[str, str] = {}
+
+    class _AI:
+        async def answer(self, question: str, title: str, body: str, thread: str) -> str:
+            seen["title"] = title
+            return "ok"
+
+    _story(monkeypatch, _Row())
+    monkeypatch.setattr(qa, "ai_client", lambda: _AI())
+    monkeypatch.setattr(qa.blobs, "get", lambda _k: b"body text")
+    await qa.handle_mention(
+        _Spy(), {"channel": "C1", "ts": "5.0", "thread_ts": "1.0", "text": "<@U1> what?"}
+    )
+    assert seen["title"] == "A headline"
