@@ -269,6 +269,30 @@ class Settings(BaseSettings):
     # under them. Clamped to half the interval so a short interval cannot
     # schedule its report into the next one.
     hourly_offset_s: float = 240.0
+
+    # --- the daily brief (Gemini + Google Search grounding) ---------------
+    # A second, separate surface: the crawled corpus says what the press
+    # published, the brief says what people actually posted. Inert unless both
+    # the key and the channel are set, the same rule the Slack card path uses
+    # -- a key with no channel researches into the void.
+    #
+    # Read as GEMINI_API_KEY too, because that is the name Google's own
+    # libraries and docs use and an operator will set that one by reflex.
+    gemini_api_key: SecretStr | None = Field(default=None, validation_alias="GEMINI_API_KEY")
+    # gemini-2.5-* returns 404 for new projects as of 2026-09-22; Google's own
+    # error names these as the replacements.
+    gemini_model: str = "gemini-3.6-flash"
+    gemini_timeout_s: float = 180.0
+    # Where briefs go. Deliberately NOT slack_channel: a research brief is a
+    # different thing from the hourly report and should not compete with it.
+    slack_brief_channel: str | None = None
+    # Local hour (digest_timezone) at which the day's briefs run.
+    brief_hour: int = Field(default=8, ge=0, le=23)
+    # A hard ceiling on grounded searches per day. Grounding is billed per
+    # search the model chooses to run -- and the model chooses, not us, so a
+    # prompt that provokes ten searches costs ten. This is the stop on a bill
+    # that would otherwise be shaped by the model's judgement.
+    brief_max_per_day: int = 25
     # How long the summarise job waits on its own batch before handing the
     # batch id to a follow-up job. Well inside `job_lease_minutes` (15) so the
     # lease cannot expire under a poll that is still running.

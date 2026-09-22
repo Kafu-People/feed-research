@@ -56,6 +56,17 @@ async def _bot_id(bot_token: str) -> str | None:
 
 async def _dispatch(client: SlackClient, envelope: dict[str, Any], bot_id: str | None) -> None:
     payload = envelope.get("payload") or {}
+
+    # Slash commands ride the SAME socket as events -- that is what makes
+    # `/techtrend` possible here at all, with no public Request URL for Slack
+    # to POST to. They arrive as their own envelope type, with the command in
+    # the payload rather than in an `event`.
+    if envelope.get("type") == "slash_commands":
+        from techtrend.deliver import commands
+
+        await commands.handle(payload)
+        return
+
     event = payload.get("event") or {}
     if event.get("type") != "app_mention":
         return

@@ -409,6 +409,12 @@ async def _maintenance(job: queue.Job) -> None:
         telemetry.log.info("jobs.purged", count=purged)
 
 
+async def _brief(job: queue.Job) -> None:
+    from techtrend.deliver import brief as brief_worker
+
+    await brief_worker.run(job)
+
+
 async def _hourly(job: queue.Job) -> None:
     from techtrend.deliver import hourly as hourly_worker
 
@@ -432,6 +438,7 @@ HANDLERS = {
     "digest": _digest,
     "summarize": _summarize,
     "hourly": _hourly,
+    "brief": _brief,
     "maintenance": _maintenance,
 }
 
@@ -450,6 +457,26 @@ async def _sweep_maintenance() -> None:
     """
     bucket = int(time.time()) // settings().maintenance_interval_s
     await queue.enqueue("maintenance", f"maintenance:{bucket}", priority=PRIORITY_BACKFILL)
+
+
+async def _sweep_brief() -> None:
+    """Enqueue the day's briefs once the local clock passes `brief_hour`.
+
+    Keyed by local day, so the job exists once however many times this runs,
+    and the stage itself skips any topic already researched today -- the key
+    guards the queue, `last_run_at` guards the spend.
+    """
+    from datetime import UTC, datetime
+
+    from techtrend.deliver.brief import configured
+    from techtrend.deliver.digest import local_day, tz
+
+    # `>=`, like the digest's own guard: a worker that was down at 08:00 and
+    # comes back at 09:30 should still file the day's briefs, and the per-day
+    # key plus `last_run_at` are what stop it filing twice.
+    if not configured() or datetime.now(UTC).astimezone(tz()).hour < settings().brief_hour:
+        return
+    await queue.enqueue("brief", f"brief:{local_day().isoformat()}", priority=PRIORITY_BACKFILL)
 
 
 async def _sweep_hourly() -> None:
@@ -526,6 +553,7 @@ async def _run_worker(stages: list[str], concurrency: int) -> None:
     do_digest = "digest" in stages
     do_summarize = "summarize" in stages
     do_hourly = "hourly" in stages
+    do_brief = "brief" in stages
 
     while not stop.is_set():
         if sweep is not None:
@@ -539,6 +567,8 @@ async def _run_worker(stages: list[str], concurrency: int) -> None:
             await _sweep_summarize()
         if do_hourly:
             await _sweep_hourly()
+        if do_brief:
+            await _sweep_brief()
         jobs = await queue.claim(stages, batch=concurrency)
         if not jobs:
             # Graceful shutdown: stop claiming, let in-flight jobs finish.

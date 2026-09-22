@@ -1,0 +1,207 @@
+"""The Gemini brief surface: parsing, gating, and the command grammar.
+
+The gate tests are the point. A brief is prose a model wrote about pages
+nobody here fetched -- it is the likeliest way a banned subject reaches the
+channel, and the only thing standing in the way is that the block list is
+applied to generated text exactly as it is to crawled text.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from techtrend.ai.gemini import Brief, Source, _parse
+from techtrend.deliver import brief as brief_mod
+
+# ------------------------------------------------------------ response parsing
+
+
+def test_parse_pulls_answer_sources_and_search_count() -> None:
+    out = _parse(
+        {
+            "candidates": [
+                {
+                    "content": {"parts": [{"text": "Rates "}, {"text": "fell."}]},
+                    "groundingMetadata": {
+                        "groundingChunks": [
+                            {"web": {"uri": "https://a", "title": "A"}},
+                            {"web": {"uri": "https://b", "title": "B"}},
+                        ],
+                        "webSearchQueries": ["q1", "q2", "q3"],
+                    },
+                }
+            ]
+        }
+    )
+    assert out.text == "Rates fell."
+    assert [s.uri for s in out.sources] == ["https://a", "https://b"]
+    # What Google bills for is searches, not prompts -- so that is what the
+    # budget counts and what the post footer reports.
+    assert out.searches == 3
+
+
+def test_parse_dedupes_sources() -> None:
+    """One answer cites the same page repeatedly; a reader wants a source
+    list, not a citation list."""
+    out = _parse(
+        {
+            "candidates": [
+                {
+                    "content": {"parts": [{"text": "x"}]},
+                    "groundingMetadata": {
+                        "groundingChunks": [
+                            {"web": {"uri": "https://a", "title": "A"}},
+                            {"web": {"uri": "https://a", "title": "A"}},
+                        ]
+                    },
+                }
+            ]
+        }
+    )
+    assert len(out.sources) == 1
+
+
+def test_parse_survives_a_blocked_or_empty_response() -> None:
+    """The caller decides whether there is enough to post; it cannot decide
+    that from a KeyError."""
+    assert _parse({}).text == ""
+    assert _parse({"candidates": [{}]}).text == ""
+
+
+# ------------------------------------------------------------------- the gates
+
+
+def test_a_banned_publisher_is_dropped_from_sources() -> None:
+    """Grounding returns a redirect URL on Google's own host, so the hostname
+    cannot answer this -- the real domain arrives in the title."""
+    assert brief_mod._banned_source(
+        Source(title="bbc.co.uk", uri="https://vertexaisearch.cloud.google.com/redirect/x")
+    )
+    assert not brief_mod._banned_source(
+        Source(title="reddit.com", uri="https://vertexaisearch.cloud.google.com/redirect/y")
+    )
+
+
+def test_render_keeps_the_body_and_links_the_sources() -> None:
+    _, blocks = brief_mod._render(
+        "dataannotation", "Pay fell.", [Source("reddit.com", "https://r")], 3
+    )
+    body = "".join(str(b) for b in blocks)
+    assert "Pay fell." in body
+    assert "https://r" in body
+    assert "3 searches" in body
+
+
+def test_render_escapes_link_text() -> None:
+    """A bare | or > inside <url|text> ends the link early."""
+    _, blocks = brief_mod._render("x", "body", [Source("a | b > c", "https://r")], 1)
+    assert "a ❘ b &gt; c" in "".join(str(b) for b in blocks)
+
+
+# ------------------------------------------------------------ command grammar
+
+
+@pytest.mark.parametrize(
+    ("name", "ok"),
+    [
+        ("dataannotation", True),
+        ("data-annotation", True),
+        ("ok_1", True),
+        ("Data Annotation", False),
+        ("a" * 40, False),
+        ("", False),
+    ],
+)
+def test_topic_names_are_one_safe_word(name: str, ok: bool) -> None:
+    from techtrend.deliver.commands import _NAME
+
+    assert bool(_NAME.match(name)) is ok
+
+
+def test_brief_is_inert_without_both_halves(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A key with no channel researches into the void; a channel with no key
+    posts nothing. Same rule as the Slack card path."""
+    from techtrend.platform.config import settings
+
+    settings.cache_clear()
+    try:
+        assert brief_mod.configured() is False
+    finally:
+        settings.cache_clear()
+
+
+# ------------------------------- the block list applies to GENERATED prose
+
+
+class _Spy:
+    def __init__(self) -> None:
+        self.posts: list[str] = []
+
+    async def post(self, channel, text_, blocks=None, thread_ts=None, unfurl=True):
+        self.posts.append(text_)
+        return "1.0"
+
+
+def _wire(monkeypatch: pytest.MonkeyPatch, text_: str) -> _Spy:
+    async def fake_research(prompt: str) -> Brief:
+        return Brief(text=text_, sources=[Source("reddit.com", "https://r")], queries=["q"])
+
+    spy = _Spy()
+    monkeypatch.setattr(brief_mod.gemini, "research", fake_research)
+    monkeypatch.setattr(brief_mod, "SlackClient", lambda: spy)
+    monkeypatch.setenv("TT_SLACK_BRIEF_CHANNEL", "#briefs")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    return spy
+
+
+@pytest.mark.asyncio
+async def test_a_banned_subject_is_never_posted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The invariant this surface most threatens.
+
+    The prose was written by a model about pages nobody here fetched. If the
+    block list is not applied to it, the one path into the channel that skips
+    the crawler also skips the ban.
+    """
+    from techtrend.platform.config import settings
+
+    settings.cache_clear()
+    spy = _wire(monkeypatch, "Workers in Tel Aviv report higher rates this week.")
+    try:
+        spent = await brief_mod._one(spy, "dataannotation", "prompt")
+    finally:
+        settings.cache_clear()
+    assert spy.posts == []  # nothing reached the channel
+    assert spent == 1  # but the search was still paid for, and counted
+
+
+@pytest.mark.asyncio
+async def test_ordinary_prose_is_posted(monkeypatch: pytest.MonkeyPatch) -> None:
+    from techtrend.platform.config import settings
+
+    settings.cache_clear()
+    spy = _wire(monkeypatch, "Annotators report DataAnnotation rates fell to $18/hr.")
+    try:
+        await brief_mod._one(spy, "dataannotation", "prompt")
+    finally:
+        settings.cache_clear()
+    assert len(spy.posts) == 1
+
+
+@pytest.mark.asyncio
+async def test_quota_exhaustion_stops_the_whole_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A project without billing 429s every grounded call. Treating that as a
+    retryable rate limit would hammer it for nothing, so it propagates."""
+    from techtrend.ai.gemini import QuotaExceeded
+    from techtrend.platform.config import settings
+
+    async def fake_research(prompt: str) -> Brief:
+        raise QuotaExceeded("no billing")
+
+    settings.cache_clear()
+    spy = _wire(monkeypatch, "unused")
+    monkeypatch.setattr(brief_mod.gemini, "research", fake_research)
+    try:
+        with pytest.raises(QuotaExceeded):
+            await brief_mod._one(spy, "x", "prompt")
+    finally:
+        settings.cache_clear()
