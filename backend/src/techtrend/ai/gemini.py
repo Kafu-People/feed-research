@@ -30,6 +30,27 @@ from techtrend.platform.telemetry import log
 
 _ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
+# The house style, same rule as the Anthropic prompts in ai/prompts/. Without
+# it a brief is written in the register of the pages it read -- forum slang and
+# press-release English -- which is the hardest possible mix for the reader
+# this channel is for.
+_STYLE = """Write for a smart adult who reads English as a SECOND language.
+They understand technology. They do not know English idioms.
+
+- No idioms and no phrasal verbs. Say "released", not "rolled out". Say
+  "repeated", not "doubled down". Say "invented", not "came up with".
+- Use the commoner of two words that mean the same thing: buy not acquire,
+  try not attempt, use not utilise, about not approximately, later not
+  subsequently.
+- Say who did what. "Google raised the price", not "the price was raised".
+- One fact per sentence. Short sentences.
+- Explain any industry term the first time you use it, in a few plain words.
+- No hype. Say what was claimed and who claimed it.
+
+Write flowing paragraphs. No headings, no bullet points, no bold. This goes
+straight into a chat message, where that punctuation shows up as raw
+characters."""
+
 
 class NotConfigured(RuntimeError):
     """No API key. The brief stage is inert rather than broken."""
@@ -72,6 +93,7 @@ async def research(prompt: str) -> Brief:
 
     body = {
         "contents": [{"parts": [{"text": prompt}]}],
+        "systemInstruction": {"parts": [{"text": _STYLE}]},
         # The tool the whole feature rests on. Without it the model answers
         # from training data, which for "what did people post this week" is
         # worse than no answer -- it is a confident one about last year.
