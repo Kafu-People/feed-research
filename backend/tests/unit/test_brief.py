@@ -147,19 +147,39 @@ def test_brief_needs_both_halves(
 class _Spy:
     def __init__(self) -> None:
         self.posts: list[str] = []
+        self.threads: list[str | None] = []
 
     async def post(self, channel, text_, blocks=None, thread_ts=None, unfurl=True):
         self.posts.append(text_)
+        self.threads.append(thread_ts)
         return "1.0"
 
 
 def _wire(monkeypatch: pytest.MonkeyPatch, text_: str) -> _Spy:
+    """Stub everything outside the module under test -- including the DB.
+
+    `_one` stamps `last_run_at` on success, which opened a real asyncpg
+    connection from a unit test. It passed alone and failed in the suite with
+    "attached to a different loop", because the pool outlives one test's event
+    loop. A unit test has no business reaching Postgres.
+    """
+    import contextlib
+
     async def fake_research(prompt: str) -> Brief:
         return Brief(text=text_, sources=[Source("reddit.com", "https://r")], queries=["q"])
+
+    class _Session:
+        async def execute(self, *_a, **_kw):
+            return None
+
+    @contextlib.asynccontextmanager
+    async def fake_scope():
+        yield _Session()
 
     spy = _Spy()
     monkeypatch.setattr(brief_mod.gemini, "research", fake_research)
     monkeypatch.setattr(brief_mod, "SlackClient", lambda: spy)
+    monkeypatch.setattr(brief_mod, "session_scope", fake_scope)
     monkeypatch.setenv("TT_SLACK_BRIEF_CHANNEL", "#briefs")
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     return spy
@@ -195,7 +215,44 @@ async def test_ordinary_prose_is_posted(monkeypatch: pytest.MonkeyPatch) -> None
         await brief_mod._one(spy, "dataannotation", "prompt")
     finally:
         settings.cache_clear()
+    # One post: this fixture's answer carries no marker, so there is no
+    # tables half to post.
     assert len(spy.posts) == 1
+
+
+@pytest.mark.asyncio
+async def test_both_readings_are_posted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The operator's shape: the write-up AND the same findings as tables,
+    as two ordinary posts.
+
+    They answer different questions -- understanding wants paragraphs,
+    deciding wants a grid -- and one research call produces both, so nobody
+    has to choose and the second post is free. Not a thread: a thread hides
+    the tables behind a click, and the tables are usually the point.
+    """
+    from techtrend.ai.gemini import TABLES_MARKER
+    from techtrend.platform.config import settings
+
+    text = f"Rates fell this week.\n{TABLES_MARKER}\n| Platform | Pay |\n| --- | --- |"
+    settings.cache_clear()
+    spy = _wire(monkeypatch, text)
+    try:
+        await brief_mod._one(spy, "dataannotation", "prompt")
+    finally:
+        settings.cache_clear()
+    assert len(spy.posts) == 2
+    assert all(t is None for t in spy.threads)  # both top level, no thread
+    assert "tables" in spy.posts[-1]
+
+
+def test_a_brief_without_the_marker_still_posts() -> None:
+    """The split is the model following an instruction, so it can be missed.
+    Prose alone is still worth posting."""
+    from techtrend.ai.gemini import Brief
+
+    analysis, tables = Brief(text="Only prose here.").parts
+    assert analysis == "Only prose here."
+    assert tables == ""
 
 
 @pytest.mark.asyncio

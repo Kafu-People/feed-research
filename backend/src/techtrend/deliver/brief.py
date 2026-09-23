@@ -190,15 +190,14 @@ async def _one(
     sources = [src for src in brief.sources if not _banned_source(src)]
     channel = s.slack_brief_channel
     assert channel is not None  # noqa: S101 - narrowed by configured()
-    fallback, blocks = _render(
-        heading or name,
-        brief.text,
-        sources,
-        brief.searches,
+    blocks = await _post_both(
+        client,
+        channel,
+        title=heading or name,
         label=None if heading else CADENCES[cadence]["label"],
+        brief=brief,
+        sources=sources,
     )
-    # unfurl off: a source list of a dozen links would bury the brief itself.
-    await client.post(channel, fallback, blocks=blocks, unfurl=False)
 
     if heading is None:
         async with session_scope() as sess:
@@ -319,6 +318,47 @@ def _source_line(sources: list) -> str:
         n = counts[label]
         parts.append(f"<{uri}|{label}>" + (f" ×{n}" if n > 1 else ""))
     return " · ".join(parts)
+
+
+async def _post_both(
+    client: SlackClient,
+    channel: str,
+    *,
+    title: str,
+    label: str | None,
+    brief: gemini.Brief,
+    sources: list,
+) -> list[dict]:
+    """Two posts: the write-up, then the same findings as tables.
+
+    Both, not one. They answer different questions -- understanding wants
+    paragraphs, deciding wants a grid -- and one research call produces both
+    halves, so the second post is free. Separate messages rather than a
+    thread, because a thread hides the tables behind a click and the tables
+    are usually what someone came for.
+    """
+    analysis, tables = brief.parts
+    posted: list[dict] = []
+    # Sources ride on the LAST post only: repeating a 17-link source line
+    # twice says nothing the first one did not.
+    halves = [(analysis, label), (tables, "tables")]
+    present = [(body, lbl) for body, lbl in halves if body.strip()]
+    for i, (body, lbl) in enumerate(present):
+        fallback, blocks = _render(
+            title,
+            body,
+            sources if i == len(present) - 1 else [],
+            brief.searches,
+            label=lbl,
+        )
+        try:
+            # unfurl off: a dozen source links would bury the brief itself.
+            await client.post(channel, fallback, blocks=blocks, unfurl=False)
+            posted += blocks
+        except Exception:  # noqa: BLE001 - one half, never the brief
+            telemetry.log.exception("brief.half_failed", half=lbl)
+    telemetry.log.info("brief.posted_both", analysis_chars=len(analysis), table_chars=len(tables))
+    return posted
 
 
 def _render(

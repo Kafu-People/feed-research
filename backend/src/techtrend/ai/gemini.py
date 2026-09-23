@@ -47,6 +47,24 @@ They understand technology. They do not know English idioms.
 - Explain any industry term the first time you use it, in a few plain words.
 - No hype. Say what was claimed and who claimed it.
 
+## Answer in TWO parts, separated by a line containing only ---TABLES---
+
+The same findings, told twice, because they are read for different reasons.
+
+PART ONE — the written analysis. Short paragraphs, numbered `##` headings,
+`-` bullets, `**bold**` on the fact that matters. This is for the reader who
+wants to understand. Do NOT put tables here.
+
+PART TWO — the same information as markdown tables, and almost nothing else.
+This is for the reader who wants to compare and decide. One table per thing
+being compared, each with a `##` heading above it. Four or five columns at
+most, so it stays readable on a phone. A one-line note under a table is fine;
+paragraphs are not.
+
+Never omit a part. If there is genuinely nothing to tabulate -- a quiet day
+with two news items -- write the marker anyway and put a single short table
+under it.
+
 ## Structure it so it can be skimmed
 A reader scrolling a chat channel does not read a wall of paragraphs. Give the
 answer a shape.
@@ -87,11 +105,25 @@ class Source:
     uri: str
 
 
+# The model is told to separate its two parts with this line and nothing else.
+TABLES_MARKER = "---TABLES---"
+
+
 @dataclass(frozen=True)
 class Brief:
     text: str
     sources: list[Source] = field(default_factory=list)
     queries: list[str] = field(default_factory=list)
+
+    @property
+    def parts(self) -> tuple[str, str]:
+        """(analysis, tables). The tables half is empty when the model wrote
+        no marker, which is the fallback the caller has to handle rather than
+        a failure -- a brief with only prose is still worth posting."""
+        if TABLES_MARKER not in self.text:
+            return self.text.strip(), ""
+        head, _, tail = self.text.partition(TABLES_MARKER)
+        return head.strip(), tail.strip()
 
     @property
     def searches(self) -> int:
