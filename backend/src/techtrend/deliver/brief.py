@@ -145,6 +145,35 @@ def _banned_source(src: gemini.Source) -> bool:
     return bool(site_blocked(host, banned) or site_blocked(src.title.strip(), banned))
 
 
+def _chunk(body: str, limit: int) -> list[str]:
+    """Split a long answer across section blocks, on paragraph boundaries.
+
+    A Slack section caps at 3,000 characters, and this used to truncate at
+    2,900 -- fine for a three-paragraph brief, silently destructive for a
+    structured report with six headed sections, which is a shape a user can
+    ask for in one sentence. Slack allows 50 blocks a message, so splitting
+    buys about 145,000 characters before anything has to be dropped.
+    """
+    if len(body) <= limit:
+        return [body]
+    parts: list[str] = []
+    cur = ""
+    for para in body.split("\n\n"):
+        # A single paragraph over the limit still has to be cut somewhere.
+        while len(para) > limit:
+            parts.append(para[:limit])
+            para = para[limit:]
+        if cur and len(cur) + len(para) + 2 > limit:
+            parts.append(cur)
+            cur = para
+        else:
+            cur = f"{cur}\n\n{para}" if cur else para
+    if cur:
+        parts.append(cur)
+    # 50 blocks a message, minus the header, context, divider and footer.
+    return parts[:44]
+
+
 def _source_line(sources: list) -> str:
     """One link per PUBLISHER, not one per citation.
 
@@ -175,7 +204,10 @@ def _render(name: str, body: str, sources: list, searches: int) -> tuple[str, li
     heading = heading[:147] + "…" if len(heading) > 150 else heading
     blocks: list[dict] = [
         {"type": "header", "text": {"type": "plain_text", "text": heading, "emoji": True}},
-        {"type": "section", "text": {"type": "mrkdwn", "text": to_mrkdwn(body)[:2900]}},
+        *(
+            {"type": "section", "text": {"type": "mrkdwn", "text": part}}
+            for part in _chunk(to_mrkdwn(body), 2900)
+        ),
     ]
     if sources:
         blocks.append({"type": "divider"})

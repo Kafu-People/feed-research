@@ -27,6 +27,13 @@ from techtrend.platform.config import settings
 from techtrend.platform.db import session_scope
 
 
+def _short(s: str, limit: int = 900) -> str:
+    """A prompt is free-form and can be thousands of characters -- a research
+    brief spec, say. A Slack section caps at 3,000, so echoing one back
+    unbounded fails the whole reply."""
+    return s if len(s) <= limit else s[: limit - 1].rstrip() + "…"
+
+
 def _blocks(*, title: str, body: str, note: str | None = None) -> list[dict]:
     """One shape for every reply: a bold title, the body, a quiet note.
 
@@ -337,7 +344,7 @@ async def _do_add(rest: str, user: str | None) -> tuple[str, list[dict]]:
         )
     return (
         f"{verb} {name}",
-        _blocks(title=f"{verb} `{name}`", body=f"> {prompt}", note=note),
+        _blocks(title=f"{verb} `{name}`", body=f"> {_short(prompt)}", note=note),
     )
 
 
@@ -385,7 +392,7 @@ async def _do_edit(rest: str) -> tuple[str, list[dict]]:
         f"Updated {name}",
         _blocks(
             title=f"Updated `{name}`",
-            body=f"*Now:*\n> {prompt}\n\n*Was:*\n> {old.prompt[:240]}",
+            body=f"*Now:*\n> {_short(prompt, 900)}\n\n*Was:*\n> {_short(old.prompt, 240)}",
             note=f"_Takes effect on the next run. `/techtrend run {name}` uses it now._",
         ),
     )

@@ -325,3 +325,37 @@ def test_every_reply_is_blocks_not_a_wall_of_text() -> None:
     assert out[-1]["type"] == "context"
     assert any(b["type"] == "header" for b in HELP_BLOCKS)
     assert "edit" in str(HELP_BLOCKS)
+
+
+def test_a_long_report_is_split_not_truncated() -> None:
+    """A Slack section caps at 3,000 characters, and this used to truncate at
+    2,900. The first real research topic produced 17,542 characters, so
+    truncating would have thrown away 83% of what was paid for."""
+    from techtrend.deliver.brief import _chunk, _render
+
+    body = ("Some paragraph of report text. " * 60 + "\n\n") * 10
+    parts = _chunk(body, 2900)
+    assert len(parts) > 1
+    assert max(len(p) for p in parts) <= 2900
+    # Nothing silently vanishes between chunking and rendering.
+    _, blocks = _render("aigigwork", body, [], 4)
+    delivered = sum(len(b["text"]["text"]) for b in blocks if b["type"] == "section")
+    assert delivered >= len(body) * 0.95
+
+
+def test_a_single_huge_paragraph_still_fits() -> None:
+    """Paragraph splitting cannot help when there are no paragraphs."""
+    from techtrend.deliver.brief import _chunk
+
+    parts = _chunk("x" * 9000, 2900)
+    assert max(len(p) for p in parts) <= 2900
+    assert "".join(parts) == "x" * 9000
+
+
+def test_a_long_prompt_echo_cannot_break_the_reply() -> None:
+    """A prompt is free-form. The research spec added here was 2,631
+    characters, and echoing one unbounded into a section fails the reply."""
+    from techtrend.deliver.commands import _short
+
+    assert len(_short("y" * 5000)) <= 900
+    assert _short("short one") == "short one"
