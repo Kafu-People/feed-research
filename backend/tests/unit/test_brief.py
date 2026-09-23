@@ -231,3 +231,42 @@ def test_sources_are_grouped_by_publisher() -> None:
     assert line.count("reddit.com") == 1
     assert "×17" in line
     assert "news.ycombinator.com" in line
+
+
+# ------------------------------------ the command belongs to ONE channel
+
+
+@pytest.mark.parametrize(
+    ("channel", "allowed"),
+    [
+        ("techtrend-briefs", True),
+        ("techtrend-ai", False),
+        ("directmessage", False),
+        ("random", False),
+    ],
+)
+def test_command_only_works_in_its_home_channel(
+    monkeypatch: pytest.MonkeyPatch, channel: str, allowed: bool
+) -> None:
+    """Slack offers a slash command in EVERY channel the moment it exists.
+    Without this the watchlist is editable from anywhere, including DMs."""
+    from techtrend.deliver import commands
+
+    class _S:
+        slack_brief_channel = "#techtrend-briefs"
+
+    monkeypatch.setattr(commands, "settings", lambda: _S())
+    assert (commands._wrong_channel({"channel_name": channel}) is None) is allowed
+
+
+def test_command_is_not_refused_everywhere_when_unconfigured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No home channel configured must not mean no channel works."""
+    from techtrend.deliver import commands
+
+    class _S:
+        slack_brief_channel = None
+
+    monkeypatch.setattr(commands, "settings", lambda: _S())
+    assert commands._wrong_channel({"channel_name": "anywhere"}) is None

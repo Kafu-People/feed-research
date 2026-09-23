@@ -56,11 +56,39 @@ _REMOVE = text("UPDATE brief_topics SET active = false WHERE name = :name AND ac
 _GET = text("SELECT name, prompt FROM brief_topics WHERE name = :name AND active")
 
 
+def _wrong_channel(payload: dict[str, Any]) -> str | None:
+    """The command's home channel, if it was run somewhere else.
+
+    Slack offers a slash command in EVERY channel the moment it exists, so
+    without this `/techtrend list` works in #techtrend-ai, in a DM, and in
+    any unrelated channel someone happens to be in. The watchlist belongs to
+    one channel -- the one its briefs post to -- and the command should say so
+    rather than quietly working everywhere.
+
+    Matched on name, because that is what the operator configures; Slack sends
+    both the id and the name with every command.
+    """
+    home = (settings().slack_brief_channel or "").lstrip("#").strip()
+    if not home:
+        return None  # unconfigured: refusing everywhere would be worse
+    here = str(payload.get("channel_name") or "").lstrip("#").strip()
+    # A DM reports as `directmessage`, which is never the home channel.
+    return None if here == home else home
+
+
 async def handle(payload: dict[str, Any]) -> None:
     """Route one slash command. Never raises: a bad command is a reply."""
     args = str(payload.get("text") or "").strip()
     user = payload.get("user_id")
     response_url = str(payload.get("response_url") or "")
+
+    if home := _wrong_channel(payload):
+        telemetry.log.info("command.wrong_channel", channel=payload.get("channel_name"))
+        await _respond(
+            response_url,
+            f"`/techtrend` only works in #{home}. Join that channel and run it there.",
+        )
+        return
     verb, _, rest = args.partition(" ")
     verb, rest = verb.strip().lower(), rest.strip()
 
