@@ -75,9 +75,20 @@ async def _dispatch(client: SlackClient, envelope: dict[str, Any], bot_id: str |
     if event.get("type") == "message":
         from techtrend.deliver import discuss
 
-        if event.get("channel_type") in ("channel", "group") and not (
-            bot_id and event.get("bot_id") == bot_id
-        ):
+        own = bool(bot_id and event.get("bot_id") == bot_id)
+        # One line per message event, with the reason it was or was not
+        # taken. Without it "I sent a message and nothing happened" has three
+        # possible causes -- no subscription, wrong channel, wrong shape --
+        # and no way to tell them apart from outside.
+        telemetry.log.info(
+            "slackbot.message",
+            channel=event.get("channel"),
+            channel_type=event.get("channel_type"),
+            threaded=bool(event.get("thread_ts")),
+            own=own,
+            subtype=event.get("subtype"),
+        )
+        if event.get("channel_type") in ("channel", "group") and not own:
             await discuss.handle(event, bot_id=bot_id)
         return
 
