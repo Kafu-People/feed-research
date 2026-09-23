@@ -161,3 +161,69 @@ def test_truncation_cannot_cut_a_source_url_in_half() -> None:
     append_sources = src.index("_source_line(answer.sources")
     assert body_trunc < append_sources, "sources must be appended after truncation"
     assert re.search(r"out\[:3400\]", src)
+
+
+# -------------------------------------------- the progress note (UX)
+
+
+@pytest.mark.asyncio
+async def test_a_progress_note_is_posted_the_moment_a_question_lands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A grounded answer takes 30 to 120 seconds. A silent minute reads as
+    broken, so the note goes out from the LISTENER, not the worker."""
+    queued = _on(monkeypatch)
+    posted: list[tuple] = []
+
+    class _Client:
+        async def post(self, channel, text_, blocks=None, thread_ts=None, unfurl=True):
+            posted.append((text_, thread_ts))
+            return "note-ts"
+
+    monkeypatch.setattr(discuss, "SlackClient", lambda: _Client())
+    await discuss.handle(
+        {"channel": "C1", "ts": "2.0", "thread_ts": "1.0", "user": "U1", "text": "what now?"},
+        bot_id="B1",
+    )
+    assert posted == [(discuss.THINKING, "1.0")]
+    # The worker is told which message to replace, so the answer does not
+    # become a second notification for one question.
+    assert queued[0]["note_ts"] == "note-ts"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_note_does_not_lose_the_question(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The note is best effort. The answer is not."""
+    queued = _on(monkeypatch)
+
+    class _Broken:
+        async def post(self, *a, **kw):
+            raise RuntimeError("slack down")
+
+    monkeypatch.setattr(discuss, "SlackClient", lambda: _Broken())
+    await discuss.handle(
+        {"channel": "C1", "ts": "2.0", "thread_ts": "1.0", "user": "U1", "text": "what now?"},
+        bot_id="B1",
+    )
+    assert len(queued) == 1
+    assert queued[0]["note_ts"] is None
+
+
+def test_every_giving_up_path_resolves_the_note() -> None:
+    """A note that never resolves is worse than no note: the reader waits for
+    something that is not coming. Every `return` in `run` that carries no
+    answer must go through `_give_up` first."""
+    import inspect
+
+    src = inspect.getsource(discuss.run)
+    lines = src.split("\n")
+    for i, line in enumerate(lines):
+        if line.strip() != "return":
+            continue
+        window = lines[max(0, i - 3) : i]
+        # The one exception: the guard before any note exists.
+        if any("enabled()" in w for w in window):
+            continue
+        assert any("_give_up" in w for w in window), f"unresolved note at line {i}"

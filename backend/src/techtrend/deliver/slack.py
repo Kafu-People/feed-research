@@ -20,6 +20,7 @@ _POST = "https://slack.com/api/chat.postMessage"
 _REPLIES = "https://slack.com/api/conversations.replies"
 _LIST = "https://slack.com/api/conversations.list"
 _PERMALINK = "https://slack.com/api/chat.getPermalink"
+_UPDATE = "https://slack.com/api/chat.update"
 
 # chat.postMessage accepts "#name" or an id; chat.delete, conversations.replies
 # and chat.getPermalink all require the ID. Resolved once, then cached for the
@@ -109,6 +110,35 @@ class SlackClient:
         data = resp.json()
         _raise_for(data)
         return str(data["ts"])
+
+    async def update(
+        self,
+        channel: str,
+        ts: str,
+        text: str,
+        blocks: list[dict[str, Any]] | None = None,
+    ) -> None:
+        """Rewrite a message in place.
+
+        What makes a progress note possible without leaving litter: post
+        "looking into it", then replace that same message with the answer.
+        Two messages would mean two notifications for one question.
+
+        `channel` must be an ID here, as it must for every conversations.*
+        call -- chat.update is the exception among chat.* in not resolving a
+        #name.
+        """
+        body: dict[str, Any] = {"channel": channel, "ts": ts, "text": text}
+        if blocks is not None:
+            body["blocks"] = blocks
+        async with httpx.AsyncClient(timeout=settings().slack_timeout_s) as c:
+            try:
+                resp = await c.post(_UPDATE, headers=self._headers, json=body)
+            except httpx.HTTPError as e:
+                raise queue.RetryableError(f"slack unreachable: {e!r}") from e
+        if resp.status_code != httpx.codes.OK:
+            raise queue.RetryableError(f"slack http {resp.status_code}")
+        _raise_for(resp.json())
 
     async def channel_id(self, channel: str) -> str:
         """Resolve "#name" to a channel id. Ids pass through untouched."""
