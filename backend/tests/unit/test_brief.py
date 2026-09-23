@@ -428,3 +428,57 @@ async def test_a_one_off_question_gets_no_window(monkeypatch: pytest.MonkeyPatch
     finally:
         settings.cache_clear()
     assert seen["prompt"] == "Is Mercor still paying?"
+
+
+@pytest.mark.asyncio
+async def test_run_defaults_to_daily_and_accepts_a_cadence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`run` used to always mean daily, silently. The rhythm is the whole
+    difference between news and a reprint of the overview, so it has to be
+    sayable -- and visible in the reply when it was not said."""
+    import contextlib
+
+    from techtrend.deliver import commands
+    from techtrend.platform import queue
+
+    enqueued: list[dict] = []
+
+    class _Row:
+        prompt = "a prompt"
+
+    class _Result:
+        def one_or_none(self):
+            return _Row()
+
+    class _Session:
+        async def execute(self, *_a, **_kw):
+            return _Result()
+
+    @contextlib.asynccontextmanager
+    async def fake_scope():
+        yield _Session()
+
+    async def fake_enqueue(stage, key, payload=None, **kw):
+        enqueued.append(payload or {})
+        return True
+
+    monkeypatch.setattr(commands, "session_scope", fake_scope)
+    monkeypatch.setattr(queue, "enqueue", fake_enqueue)
+
+    fallback, _ = await commands._do_run("aigigwork")
+    assert enqueued[-1]["cadence"] == "daily"
+    assert "daily" in fallback  # the reply says which one it chose for you
+
+    await commands._do_run("aigigwork monthly")
+    assert enqueued[-1]["cadence"] == "monthly"
+
+
+@pytest.mark.asyncio
+async def test_cadence_words_cannot_be_topic_names() -> None:
+    """`run <name> monthly` reads the last word as a rhythm, so a topic
+    actually called `monthly` could never be run on its own."""
+    from techtrend.deliver import commands
+
+    fallback, _ = await commands._do_add("monthly a long enough prompt to pass", "U1")
+    assert "Reserved" in fallback

@@ -76,7 +76,8 @@ HELP_BLOCKS = [
                 "The name is one word.\n\n"
                 "*`/techtrend edit <name> <new prompt>`*\nChange what it asks\n\n"
                 "*`/techtrend remove <name>`*\nStop watching it\n\n"
-                "*`/techtrend run <name>`*\nResearch it now\n\n"
+                "*`/techtrend run <name> [daily|weekly|monthly]`*\n"
+                "Research it now. Defaults to `daily`.\n\n"
                 "*`/techtrend question <your question>`*\nAsk once. Nothing is saved."
             ),
         },
@@ -109,6 +110,9 @@ HELP = (
 # multi-word name would make "which part was the name" ambiguous against the
 # prompt that follows it.
 _NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,38}$")
+# Reserved, because `run <name> monthly` reads the last word as a cadence: a
+# topic actually called `monthly` could never be run on its own.
+_RESERVED = {"daily", "weekly", "monthly"}
 
 _LIST = text("""
     SELECT name, prompt, added_by, last_run_at
@@ -311,6 +315,14 @@ async def _do_add(rest: str, user: str | None) -> tuple[str, list[dict]]:
                 note="_Example:_ `/techtrend add mercor What are people saying about Mercor pay?`",
             ),
         )
+    if name in _RESERVED:
+        return (
+            "Reserved name",
+            _blocks(
+                title=f"`{name}` is a reserved word",
+                body="`daily`, `weekly` and `monthly` pick a rhythm, so they cannot be names.",
+            ),
+        )
     if not _NAME.match(name):
         return (
             "Bad name",
@@ -426,11 +438,27 @@ async def _do_remove(rest: str) -> tuple[str, list[dict]]:
 async def _do_run(rest: str) -> tuple[str, list[dict]]:
     """Queue one brief now. The work is a job, not this handler: Slack wants
     an ack in 3 seconds and a grounded search takes far longer."""
+    from techtrend.deliver.brief import CADENCES
     from techtrend.platform import queue
 
-    name = rest.strip().lower()
-    if not name:
-        return ("Which one?", _blocks(title="Which one?", body="`/techtrend run <name>`"))
+    parts = rest.strip().lower().split()
+    if not parts:
+        return (
+            "Which one?",
+            _blocks(
+                title="Which one?",
+                body="`/techtrend run <name>` — or add `daily`, `weekly` or `monthly`.",
+                note="_Without one it runs `daily`: what is new in the last 24 hours._",
+            ),
+        )
+    # The cadence is an optional LAST word. Taken from the end rather than a
+    # flag because `run aigigwork monthly` is how a person says it, and a
+    # topic name can never collide -- the three words are reserved below.
+    cadence = "daily"
+    if len(parts) > 1 and parts[-1] in CADENCES:
+        cadence = parts.pop()
+    name = parts[0]
+
     async with session_scope() as s:
         row = (await s.execute(_GET, {"name": name})).one_or_none()
     if row is None:
@@ -441,13 +469,26 @@ async def _do_run(rest: str) -> tuple[str, list[dict]]:
                 body="`/techtrend list` shows what is.",
             ),
         )
-    await queue.enqueue("brief", f"brief:manual:{name}:{_bucket()}", {"name": name}, priority=50)
+    await queue.enqueue(
+        "brief",
+        f"brief:manual:{name}:{cadence}:{_bucket()}",
+        {"name": name, "cadence": cadence},
+        priority=50,
+    )
+    asked = {
+        "daily": "what is new in the last 24 hours",
+        "weekly": "the last 7 days",
+        "monthly": "the complete overview",
+    }[cadence]
     return (
-        f"Researching {name}",
+        f"Researching {name} ({cadence})",
         _blocks(
-            title=f"Researching `{name}` now",
-            body="> " + row.prompt[:280],
-            note="_The brief posts to this channel in a minute._",
+            title=f"Researching `{name}` — {cadence}",
+            body=f"Asking for {asked}.\n> {_short(row.prompt, 280)}",
+            note=(
+                "_Posts to this channel in a minute. "
+                "Add `daily`, `weekly` or `monthly` to pick a different one._"
+            ),
         ),
     )
 
