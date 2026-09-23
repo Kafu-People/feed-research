@@ -118,16 +118,27 @@ def test_topic_names_are_one_safe_word(name: str, ok: bool) -> None:
     assert bool(_NAME.match(name)) is ok
 
 
-def test_brief_is_inert_without_both_halves(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    ("key", "channel", "on"),
+    [(None, None, False), ("k", None, False), (None, "#c", False), ("k", "#c", True)],
+)
+def test_brief_needs_both_halves(
+    monkeypatch: pytest.MonkeyPatch, key: str | None, channel: str | None, on: bool
+) -> None:
     """A key with no channel researches into the void; a channel with no key
-    posts nothing. Same rule as the Slack card path."""
-    from techtrend.platform.config import settings
+    posts nothing. Same rule as the Slack card path.
 
-    settings.cache_clear()
-    try:
-        assert brief_mod.configured() is False
-    finally:
-        settings.cache_clear()
+    Built from a stub rather than the environment: the deployed `.env` now has
+    both halves set, so reading real settings here tested the deployment and
+    not the rule.
+    """
+
+    class _S:
+        gemini_api_key = key
+        slack_brief_channel = channel
+
+    monkeypatch.setattr(brief_mod, "settings", lambda: _S())
+    assert brief_mod.configured() is on
 
 
 # ------------------------------- the block list applies to GENERATED prose
@@ -205,3 +216,18 @@ async def test_quota_exhaustion_stops_the_whole_run(monkeypatch: pytest.MonkeyPa
             await brief_mod._one(spy, "x", "prompt")
     finally:
         settings.cache_clear()
+
+
+def test_sources_are_grouped_by_publisher() -> None:
+    """An answer built from forum threads cites one domain many times: the
+    first real brief carried 17 sources, all titled `reddit.com`. Twelve
+    identical links tell the reader nothing."""
+    from techtrend.deliver.brief import _source_line
+
+    line = _source_line(
+        [Source("reddit.com", f"https://r/{i}") for i in range(17)]
+        + [Source("news.ycombinator.com", "https://h")]
+    )
+    assert line.count("reddit.com") == 1
+    assert "×17" in line
+    assert "news.ycombinator.com" in line

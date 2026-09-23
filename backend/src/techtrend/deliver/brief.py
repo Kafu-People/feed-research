@@ -138,6 +138,29 @@ def _banned_source(src: gemini.Source) -> bool:
     return bool(site_blocked(host, banned) or site_blocked(src.title.strip(), banned))
 
 
+def _source_line(sources: list) -> str:
+    """One link per PUBLISHER, not one per citation.
+
+    Grounding titles a source with its domain, and an answer built from forum
+    threads cites the same domain over and over: the first brief carried 17
+    sources, every one of them titled `reddit.com`. Rendering that literally
+    gives a row of twelve identical links, which tells the reader nothing and
+    costs a line of the message. One link per domain, with a count when there
+    is more than one, says the same thing and is readable.
+    """
+    first: dict[str, str] = {}
+    counts: dict[str, int] = {}
+    for src in sources:
+        label = decode_title(src.title).replace("|", "❘").replace(">", "&gt;")[:50]
+        counts[label] = counts.get(label, 0) + 1
+        first.setdefault(label, src.uri)
+    parts = []
+    for label, uri in list(first.items())[:10]:
+        n = counts[label]
+        parts.append(f"<{uri}|{label}>" + (f" ×{n}" if n > 1 else ""))
+    return " · ".join(parts)
+
+
 def _render(name: str, body: str, sources: list, searches: int) -> tuple[str, list[dict]]:
     heading = f"Brief — {name}"
     blocks: list[dict] = [
@@ -145,13 +168,9 @@ def _render(name: str, body: str, sources: list, searches: int) -> tuple[str, li
         {"type": "section", "text": {"type": "mrkdwn", "text": to_mrkdwn(body)[:2900]}},
     ]
     if sources:
-        links = []
-        for src in sources[:12]:
-            label = decode_title(src.title).replace("|", "❘").replace(">", "&gt;")[:60]
-            links.append(f"<{src.uri}|{label}>")
         blocks.append({"type": "divider"})
         blocks.append(
-            {"type": "context", "elements": [{"type": "mrkdwn", "text": " · ".join(links)}]}
+            {"type": "context", "elements": [{"type": "mrkdwn", "text": _source_line(sources)}]}
         )
     blocks.append(
         {

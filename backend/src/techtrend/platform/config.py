@@ -292,7 +292,18 @@ class Settings(BaseSettings):
     # search the model chooses to run -- and the model chooses, not us, so a
     # prompt that provokes ten searches costs ten. This is the stop on a bill
     # that would otherwise be shaped by the model's judgement.
-    brief_max_per_day: int = 25
+    #
+    # MEASURED 2026-09-23, not guessed: one prompt about DataAnnotation pay
+    # ran EIGHT searches, because the model split it per company and per
+    # subreddit. The first cap here was 25, which would have silently stopped
+    # after three topics.
+    #
+    # 40 is five topics a day. If the 5,000/month free grounding allowance
+    # applies to this project that is 1,200 searches against it and costs
+    # nothing; if it does not, it is about $17/month at $14 per 1,000 -- which
+    # fits the operator's 200 BRL budget with room, and is the number to check
+    # against real billing after the first week.
+    brief_max_per_day: int = 40
     # How long the summarise job waits on its own batch before handing the
     # batch id to a follow-up job. Well inside `job_lease_minutes` (15) so the
     # lease cannot expire under a poll that is still running.
