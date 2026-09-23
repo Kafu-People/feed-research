@@ -14,13 +14,14 @@ the model's own words before anything is posted.
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 
 from sqlalchemy import text
 
 from techtrend.ai import gemini
-from techtrend.deliver.slack import SlackClient, decode_title, to_mrkdwn
+from techtrend.deliver.slack import SlackClient, decode_title, to_slack_report
 from techtrend.platform import queue, telemetry
 from techtrend.platform.config import settings, site_blocked
 from techtrend.platform.db import session_scope
@@ -208,6 +209,9 @@ async def _one(
         searches=brief.searches,
         sources=len(sources),
         chars=len(brief.text),
+        # How many blocks it became: a wall of text is one, a structured
+        # report is many. The number that says whether the formatting held.
+        blocks=len(blocks),
     )
     return brief.searches
 
@@ -223,6 +227,46 @@ def _banned_source(src: gemini.Source) -> bool:
     banned = settings().blocked_sites
     host = urlsplit(src.uri).netloc
     return bool(site_blocked(host, banned) or site_blocked(src.title.strip(), banned))
+
+
+def _body_blocks(body: str) -> list[dict]:
+    """Section blocks, split at the report's own headings.
+
+    Chunking purely by length puts the break wherever 2,900 characters lands,
+    which is usually mid-section and reads as a glitch. Splitting at headings
+    first means every visible break is one the report intended, and a divider
+    between them turns a wall into a document.
+    """
+    out: list[dict] = []
+    for i, part in enumerate(_sections(body)):
+        for j, piece in enumerate(_chunk(part, 2900)):
+            # A divider before each new SECTION, never between the pieces of
+            # one section that was merely too long for a single block.
+            if out and j == 0 and i > 0:
+                out.append({"type": "divider"})
+            out.append({"type": "section", "text": {"type": "mrkdwn", "text": piece}})
+    return out[:45]
+
+
+def _sections(body: str) -> list[str]:
+    """Split on a bold line that stands alone -- what `to_slack_report` turns
+    a markdown heading into. Falls back to the whole body when the model wrote
+    no headings at all, which is what a short daily answer looks like."""
+    parts: list[str] = []
+    cur: list[str] = []
+    for line in body.split("\n"):
+        if _HEADING_LINE.match(line) and cur:
+            parts.append("\n".join(cur).strip())
+            cur = [line]
+        else:
+            cur.append(line)
+    if cur:
+        parts.append("\n".join(cur).strip())
+    return [p for p in parts if p]
+
+
+# A whole line that is bold and nothing else: `*2. Pay by field*`.
+_HEADING_LINE = re.compile(r"^\*[^*\n]{1,120}\*\s*$")
 
 
 def _chunk(body: str, limit: int) -> list[str]:
@@ -287,10 +331,7 @@ def _render(
     heading = heading[:147] + "…" if len(heading) > 150 else heading
     blocks: list[dict] = [
         {"type": "header", "text": {"type": "plain_text", "text": heading, "emoji": True}},
-        *(
-            {"type": "section", "text": {"type": "mrkdwn", "text": part}}
-            for part in _chunk(to_mrkdwn(body), 2900)
-        ),
+        *_body_blocks(to_slack_report(body)),
     ]
     if sources:
         blocks.append({"type": "divider"})

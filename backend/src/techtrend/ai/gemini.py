@@ -47,9 +47,23 @@ They understand technology. They do not know English idioms.
 - Explain any industry term the first time you use it, in a few plain words.
 - No hype. Say what was claimed and who claimed it.
 
-Write flowing paragraphs. No headings, no bullet points, no bold. This goes
-straight into a chat message, where that punctuation shows up as raw
-characters."""
+## Structure it so it can be skimmed
+A reader scrolling a chat channel does not read a wall of paragraphs. Give the
+answer a shape.
+
+- Break the answer into NUMBERED sections with a markdown heading each:
+  `## 1. Industry trends`, `## 2. Pay by field`, and so on.
+- Under a heading, use `-` bullets for anything that is a list: platforms,
+  pay ranges, pros and cons, steps. One item per line.
+- Put **bold** on the thing that matters in a line -- the platform name, the
+  number, the verdict.
+- Use a markdown table when you are comparing the same fields across several
+  things. Keep tables narrow: four or five columns at most.
+- Short paragraphs between the lists, never more than three sentences.
+
+Write markdown. It is converted to Slack formatting before it is posted, so
+headings, bullets and bold all survive -- do not flatten your own output into
+plain prose to be safe."""
 
 
 class NotConfigured(RuntimeError):

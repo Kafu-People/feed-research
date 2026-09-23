@@ -191,6 +191,42 @@ def to_mrkdwn(text: str) -> str:
     return text.strip()
 
 
+def to_slack_report(text: str) -> str:
+    """Model markdown -> Slack mrkdwn, KEEPING the structure.
+
+    The opposite job from `to_mrkdwn`, which strips headings and bullets and
+    folds bold into code spans. That is right for a three-sentence summary,
+    where emphasis is the only structure there is. It is wrong for a research
+    brief: a report of six sections and seventeen platforms arrived as one
+    unbroken wall, because every heading and bullet the model wrote was
+    deleted on the way out.
+
+    Slack has no heading syntax, so a heading becomes bold on its own line --
+    which is what a heading looks like in Slack, and what Slack's own product
+    does. Markdown bullets become the literal bullet character, because
+    `- item` renders as a dash and `• item` renders as a list.
+    """
+
+    # Headings first: `## 2. Fields` -> `*2. Fields*`. Done before the bold
+    # rules so the line is not left with stray asterisks to fold.
+    def _head(m: re.Match[str]) -> str:
+        title = m.group(2).strip().rstrip("*").strip()
+        return f"*{title}*" if title else ""
+
+    # `[ \t]*$`, not `\s*$`: `\s` matches newlines, so the greedy version ate
+    # the blank line after every heading and welded it to its own paragraph.
+    text = re.sub(r"^[ \t]{0,3}(#{1,6})[ \t]+(.+?)[ \t]*$", _head, text, flags=re.M)
+    text = _MD_BOLD.sub(r"*\1*", text)  # **x** -> *x*, Slack's own bold
+    text = _MD_UNDER.sub(r"*\1*", text)
+    # `- item`, `* item`, `+ item` -> `• item`, indentation preserved so a
+    # nested list still reads as nested.
+    text = re.sub(r"^(\s{0,8})[-*+][ \t]+", r"\1• ", text, flags=re.M)
+    # Markdown tables survive as-is: Slack renders no table, but a pipe-and-
+    # dash grid in a chat message is still readable, and the alternative is
+    # discarding the column headings the prompt asked for.
+    return text.strip()
+
+
 def _trunc(s: str, n: int) -> str:
     return s if len(s) <= n else s[: n - 1].rstrip() + "…"
 

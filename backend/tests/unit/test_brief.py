@@ -482,3 +482,58 @@ async def test_cadence_words_cannot_be_topic_names() -> None:
 
     fallback, _ = await commands._do_add("monthly a long enough prompt to pass", "U1")
     assert "Reserved" in fallback
+
+
+# ------------------------------------------------ structure, not a wall
+
+
+def test_headings_survive_into_slack_bold() -> None:
+    """Slack has no heading syntax, so a heading becomes a bold line on its
+    own -- which is what `to_mrkdwn` was DELETING before briefs had their own
+    renderer."""
+    from techtrend.deliver.slack import to_slack_report
+
+    out = to_slack_report("## 1. Industry Trends\n\nDemand **grew**.")
+    assert "*1. Industry Trends*" in out
+    assert "#" not in out
+    assert "*grew*" in out
+
+
+def test_bullets_become_real_bullets() -> None:
+    """`- item` renders in Slack as a dash. `\u2022 item` renders as a list."""
+    from techtrend.deliver.slack import to_slack_report
+
+    out = to_slack_report("- Coders: $40/hr\n- Doctors: $90/hr")
+    assert out.count("\u2022") == 2
+    assert not out.startswith("-")
+
+
+def test_a_heading_keeps_the_blank_line_after_it() -> None:
+    """`\\s*$` matches newlines, so the first version welded every heading to
+    the paragraph beneath it."""
+    from techtrend.deliver.slack import to_slack_report
+
+    assert "*Outlook*\n\nSteady" in to_slack_report("## Outlook\n\nSteady")
+
+
+def test_the_report_is_split_at_its_own_headings() -> None:
+    """Chunking by length alone breaks at whatever 2,900 characters lands on,
+    which reads as a glitch rather than a section."""
+    from techtrend.deliver.brief import _body_blocks
+
+    body = "*1. One*\n\nalpha\n\n*2. Two*\n\nbeta\n\n*3. Three*\n\ngamma"
+    assert [b["type"] for b in _body_blocks(body)] == [
+        "section",
+        "divider",
+        "section",
+        "divider",
+        "section",
+    ]
+
+
+def test_a_short_answer_gets_no_dividers() -> None:
+    """A daily answer is a few paragraphs with no headings. Slicing it up
+    would invent structure the model did not write."""
+    from techtrend.deliver.brief import _body_blocks
+
+    assert [b["type"] for b in _body_blocks("Two sentences.\n\nAnd another.")] == ["section"]
