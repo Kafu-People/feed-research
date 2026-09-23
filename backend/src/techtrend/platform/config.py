@@ -301,7 +301,18 @@ class Settings(BaseSettings):
     gemini_api_key: SecretStr | None = Field(default=None, validation_alias="GEMINI_API_KEY")
     # gemini-2.5-* returns 404 for new projects as of 2026-09-22; Google's own
     # error names these as the replacements.
-    gemini_model: str = "gemini-3.6-flash"
+    # The RESEARCH model. Priced 2026-09-23, per million tokens:
+    #
+    #   gemini-3.5-flash       $1.50 in / $9.00 out
+    #   gemini-3.6-flash       $0.75 / $3.75, doubling to $1.50 / $7.50 on 2027-01-01
+    #   gemini-3.5-flash-lite  $0.30 / $2.50
+    #
+    # So 3.5-flash is the DEARER of the two flashes today, by roughly $0.03 on
+    # a long monthly brief. Grounding dominates either way -- $14 per 1,000
+    # searches on every 3.x model, with 5,000 a month free and shared between
+    # them -- and 3.6-flash answered 503 twice running, which is the reason
+    # this is not simply the cheapest one.
+    gemini_model: str = "gemini-3.5-flash"
     # Tried when the primary answers 503. Google's flash models go busy in
     # spikes -- two consecutive runs hit "This model is currently
     # experiencing high demand" -- and a brief that skips a day because of
