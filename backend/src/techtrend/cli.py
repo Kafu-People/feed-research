@@ -114,7 +114,7 @@ def seed_demo_cmd(
 
 @app.command("seed-topics")
 def seed_topics_cmd(email: str = "demo@example.com") -> None:
-    """Create the ten hand-written topics and subscribe a user to all of them."""
+    """Create the hand-written topics and subscribe a user to all of them."""
     bootstrap()
     from sqlalchemy import select
 
@@ -216,6 +216,61 @@ def print_top_stories_cmd(limit: int = 15) -> None:
                     typer.echo(f"       {blurb[:170]}")
 
     asyncio.run(_go())
+
+
+@app.command("weekly-report")
+def weekly_report_cmd(
+    post: Annotated[bool, typer.Option(help="Post to the Slack channel")] = False,
+    week_ending: Annotated[
+        str | None, typer.Option(help="ISO date; defaults to the latest completed week")
+    ] = None,
+) -> None:
+    """The week's news, and what it points to. Prints unless --post.
+
+    Without --post this is a dry run: it costs one model call and posts
+    nothing, which is how you read the week before the channel does.
+    """
+    bootstrap()
+    from datetime import UTC, datetime, timedelta
+    from datetime import time as _time
+
+    from techtrend.deliver import report as rep
+    from techtrend.deliver.digest import linkify
+    from techtrend.deliver.slack import SlackClient, to_mrkdwn
+    from techtrend.platform.db import session_scope
+
+    s = settings()
+    if not s.slack_channel:
+        raise typer.BadParameter("weekly-report needs slack_channel configured")
+
+    if week_ending:
+        from datetime import date as _date
+
+        end = _date.fromisoformat(week_ending)
+        until = datetime.combine(end, _time(rep.REPORT_HOUR), tzinfo=rep.tz())
+        since = until - timedelta(days=7)
+    else:
+        since, until = rep.week_window()
+
+    async def _go() -> tuple[str, str | None]:
+        async with session_scope() as sess:
+            body, rows, totals = await rep.build(
+                sess, s.slack_channel, since.astimezone(UTC), until.astimezone(UTC)
+            )
+        if not body:
+            return "(no stories carried in this window)", None
+        if not post:
+            return body, None
+        client = SlackClient()
+        linked = await linkify(to_mrkdwn(body), rows, client, s.slack_channel)
+        fallback, blocks = rep.blocks_for(until, linked, totals.n, totals.sites)
+        ts = await client.post(s.slack_channel, fallback, blocks=blocks, unfurl=False)
+        return body, ts
+
+    body, ts = asyncio.run(_go())
+    typer.echo(body)
+    if ts:
+        typer.echo(f"\nposted to {s.slack_channel} (ts={ts})")
 
 
 @app.command("fingerprint-study")
@@ -354,6 +409,30 @@ async def _maintenance(job: queue.Job) -> None:
         telemetry.log.info("jobs.purged", count=purged)
 
 
+async def _discuss(job: queue.Job) -> None:
+    from techtrend.deliver import discuss as discuss_worker
+
+    await discuss_worker.run(job)
+
+
+async def _brief(job: queue.Job) -> None:
+    from techtrend.deliver import brief as brief_worker
+
+    await brief_worker.run(job)
+
+
+async def _hourly(job: queue.Job) -> None:
+    from techtrend.deliver import hourly as hourly_worker
+
+    await hourly_worker.run(job)
+
+
+async def _summarize(job: queue.Job) -> None:
+    from techtrend.deliver import summarize as summarize_worker
+
+    await summarize_worker.run(job)
+
+
 HANDLERS = {
     "collect": _collect,
     "read": _read,
@@ -363,6 +442,10 @@ HANDLERS = {
     "feedback": _feedback,
     "notify": _notify,
     "digest": _digest,
+    "summarize": _summarize,
+    "hourly": _hourly,
+    "brief": _brief,
+    "discuss": _discuss,
     "maintenance": _maintenance,
 }
 
@@ -381,6 +464,79 @@ async def _sweep_maintenance() -> None:
     """
     bucket = int(time.time()) // settings().maintenance_interval_s
     await queue.enqueue("maintenance", f"maintenance:{bucket}", priority=PRIORITY_BACKFILL)
+
+
+async def _sweep_brief() -> None:
+    """Enqueue the day's briefs once the local clock passes `brief_hour`.
+
+    Keyed by local day, so the job exists once however many times this runs,
+    and the stage itself skips any topic already researched today -- the key
+    guards the queue, `last_run_at` guards the spend.
+    """
+    from datetime import UTC, datetime
+
+    from techtrend.deliver.brief import configured
+    from techtrend.deliver.digest import local_day, tz
+
+    # `>=`, like the digest's own guard: a worker that was down at 08:00 and
+    # comes back at 09:30 should still file the day's briefs, and the per-day
+    # key plus `last_run_at` are what stop it filing twice.
+    if not configured() or datetime.now(UTC).astimezone(tz()).hour < settings().brief_hour:
+        return
+
+    day = local_day()
+    # Daily every morning. Weekly on Monday, monthly on the 1st -- so a Monday
+    # the 1st files all three, and each is a separate job with its own key,
+    # its own window and its own stamp. The stage skips a topic whose stamp
+    # for THAT cadence is still fresh, so a doubled-up morning costs nothing
+    # extra the next day.
+    await queue.enqueue(
+        "brief",
+        f"brief:daily:{day.isoformat()}",
+        {"cadence": "daily"},
+        priority=PRIORITY_BACKFILL,
+    )
+    if day.weekday() == 0:
+        await queue.enqueue(
+            "brief",
+            f"brief:weekly:{day.isocalendar().week}:{day.year}",
+            {"cadence": "weekly"},
+            priority=PRIORITY_BACKFILL,
+        )
+    if day.day == 1:
+        await queue.enqueue(
+            "brief",
+            f"brief:monthly:{day.year}-{day.month:02d}",
+            {"cadence": "monthly"},
+            priority=PRIORITY_BACKFILL,
+        )
+
+
+async def _sweep_hourly() -> None:
+    """Enqueue one report job per interval, a few minutes PAST the boundary.
+
+    The offset is the whole point. Without it this sweep and the interval's own
+    work fire on the same tick, and the report is assembled from a window whose
+    last stories have not finished matching yet -- which is exactly how three
+    cards went out at 17:00 with no summary under them.
+    """
+    interval_s = max(60.0, settings().slack_post_interval_hours * 3600.0)
+    offset_s = min(settings().hourly_offset_s, interval_s / 2)
+    bucket = int((time.time() - offset_s) // interval_s)
+    await queue.enqueue("hourly", f"hourly:{bucket}", priority=PRIORITY_BACKFILL)
+
+
+async def _sweep_summarize() -> None:
+    """Enqueue one summarise job per posting interval. Nothing else will.
+
+    Same time-bucket key as `_sweep_maintenance`, for the same reason: many
+    loop iterations and many workers all try, and only the first insert wins.
+    The bucket is the posting interval, so the batch is submitted just after
+    the interval's cards have gone out.
+    """
+    interval_s = max(60.0, settings().slack_post_interval_hours * 3600.0)
+    bucket = int(time.time() // interval_s)
+    await queue.enqueue("summarize", f"summarize:{bucket}", priority=PRIORITY_BACKFILL)
 
 
 async def _sweep_digest() -> None:
@@ -428,6 +584,9 @@ async def _run_worker(stages: list[str], concurrency: int) -> None:
 
     do_maintenance = "maintenance" in stages
     do_digest = "digest" in stages
+    do_summarize = "summarize" in stages
+    do_hourly = "hourly" in stages
+    do_brief = "brief" in stages
 
     while not stop.is_set():
         if sweep is not None:
@@ -437,6 +596,12 @@ async def _run_worker(stages: list[str], concurrency: int) -> None:
             await _sweep_maintenance()
         if do_digest:
             await _sweep_digest()
+        if do_summarize:
+            await _sweep_summarize()
+        if do_hourly:
+            await _sweep_hourly()
+        if do_brief:
+            await _sweep_brief()
         jobs = await queue.claim(stages, batch=concurrency)
         if not jobs:
             # Graceful shutdown: stop claiming, let in-flight jobs finish.

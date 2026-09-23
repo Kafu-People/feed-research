@@ -4,7 +4,7 @@ After=network-online.target
 
 [Service]
 WorkingDirectory=/opt/TechTrend/backend
-ExecStart=/opt/TechTrend/backend/.venv/bin/techtrend worker --stage collect,read,group,match,notify,digest,maintenance --concurrency 4
+ExecStart=/opt/TechTrend/backend/.venv/bin/techtrend worker --stage collect,read,group,match,notify,digest,summarize,hourly,brief,discuss,maintenance --concurrency 4
 Restart=always
 RestartSec=10
 

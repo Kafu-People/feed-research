@@ -7,7 +7,14 @@ services:
     environment:
       POSTGRES_PASSWORD: dev
       POSTGRES_DB: techtrend
-    ports: ["5432:5432"]
+    # Bound to loopback, NOT 0.0.0.0. pg_hba rejects remote `postgres` logins,
+    # and that reject was the ONLY thing between the open internet and a
+    # superuser whose password is "dev" -- so the reject cannot be relaxed for
+    # the host (docker-proxy makes host and internet traffic both arrive from
+    # the bridge gateway, 172.19.0.1: pg_hba cannot tell them apart) until the
+    # port stops being public. Reach it from elsewhere over an SSH tunnel:
+    #   ssh -L 5432:127.0.0.1:5432 <host>
+    ports: ["127.0.0.1:5432:5432"]
     volumes: ["pgdata:/var/lib/postgresql/data"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]

@@ -38,7 +38,7 @@ class Settings(BaseSettings):
 
     # --- ai ------------------------------------------------------------
     anthropic_api_key: SecretStr | None = None  # None → SDK resolves from env/profile
-    ai_model: str = "claude-opus-5"
+    ai_model: str = "claude-haiku-4-5"        # ← every ai_*_model is Haiku; Opus fails at boot
     ai_judge_effort: Literal["low", "medium", "high", "xhigh", "max"] = "medium"
     ai_distill_effort: Literal["low", "medium", "high"] = "low"
     ai_batch_enabled: bool = True

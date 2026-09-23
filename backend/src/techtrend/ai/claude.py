@@ -6,6 +6,7 @@ AI cost) and distill (one per topic created, on the onboarding critical path).
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import cast
 
@@ -15,8 +16,6 @@ from techtrend.ai.schemas import JudgeResult, TopicDraft
 from techtrend.platform.config import settings
 from techtrend.platform.telemetry import AI_TOKENS, log
 
-MODEL = "claude-opus-5"
-
 _PROMPTS = Path(__file__).parent / "prompts"
 # Loaded once at import. NEVER an f-string: interpolating a date, a story id or
 # a build hash into the system prompt silently kills prompt caching.
@@ -25,6 +24,20 @@ DISTILL_SYSTEM = (_PROMPTS / "distill.md").read_text()
 SUMMARIZE_SYSTEM = (_PROMPTS / "summarize.md").read_text()
 ANSWER_SYSTEM = (_PROMPTS / "answer.md").read_text()
 DIGEST_SYSTEM = (_PROMPTS / "digest.md").read_text()
+WEEKLY_SYSTEM = (_PROMPTS / "weekly.md").read_text()
+
+
+class BatchPending(Exception):
+    """A submitted batch had not finished inside the wait window.
+
+    Not an error: the work is queued on Anthropic's side and the batch id is
+    the receipt. The caller hands the id to a follow-up job rather than
+    burning a worker slot on a longer poll.
+    """
+
+    def __init__(self, batch_id: str) -> None:
+        super().__init__(f"batch still running: {batch_id}")
+        self.batch_id = batch_id
 
 
 class Refused(Exception):
@@ -156,6 +169,88 @@ class ClaudeClient:
             return None
         return text
 
+    async def summarize_batch(self, items: list[tuple[int, str, str]]) -> dict[int, str | None]:
+        """Summarise many stories in ONE Message Batches submission.
+
+        Same prompt and same model as `summarize`, one request per story --
+        the batch is a billing and scheduling envelope, not a different
+        prompt. That matters: the summary is the most-read output the system
+        produces, and folding N stories into one prompt to save the repeated
+        system block would trade its quality for about a third of what the
+        batch discount gives back anyway.
+
+        Returns {story_id: summary or None}. A story missing from the mapping
+        errored; the caller leaves it unsummarised and it is picked up by the
+        next run, because `summary_ts` is still NULL.
+        """
+        s = settings()
+        requests = [
+            {
+                "custom_id": f"story-{sid}",
+                "params": {
+                    "model": s.ai_summary_model,
+                    "max_tokens": _max_tokens(s.ai_summary_model, plain=400, thinking=3000),
+                    "system": [{"type": "text", "text": SUMMARIZE_SYSTEM}],
+                    "messages": [{"role": "user", "content": f"{title}\n\n{body}"}],
+                    **_effort_kwargs(s.ai_summary_model, s.ai_summary_effort),
+                },
+            }
+            for sid, title, body in items
+        ]
+        batch = await self._c.messages.batches.create(requests=requests)
+        log.info("ai.batch_submitted", stage="summarize", batch_id=batch.id, n=len(requests))
+        return await self.collect_batch(batch.id)
+
+    async def batch_ended(self, batch_id: str) -> bool:
+        """One status check, no waiting.
+
+        Separate from `collect_batch` because a follow-up job must not hold a
+        worker slot asleep. Measured 2026-09-08: batches of ten small requests
+        ended in 2 minutes, 8 minutes and 40 minutes on three consecutive
+        runs, so there is no wait length that is both short enough to be free
+        and long enough to be sufficient. The queue does the waiting instead.
+        """
+        batch = await self._c.messages.batches.retrieve(batch_id)
+        return bool(batch.processing_status == "ended")
+
+    async def collect_batch(self, batch_id: str) -> dict[int, str | None]:
+        """Wait a bounded time for a submitted batch, then read its results.
+
+        Raises `BatchPending` rather than returning a partial mapping when the
+        wait runs out -- a partial mapping is indistinguishable from "these
+        stories declined", and would mark them summarised forever.
+        """
+        s = settings()
+        deadline = asyncio.get_running_loop().time() + s.ai_batch_max_wait_s
+        while not await self.batch_ended(batch_id):
+            if asyncio.get_running_loop().time() >= deadline:
+                raise BatchPending(batch_id)
+            await asyncio.sleep(s.ai_batch_poll_s)
+        return await self.read_batch(batch_id)
+
+    async def read_batch(self, batch_id: str) -> dict[int, str | None]:
+        """Read an ENDED batch's results. Never waits."""
+        s = settings()
+        out: dict[int, str | None] = {}
+        results = await self._c.messages.batches.results(batch_id)
+        async for entry in results:
+            sid = int(str(entry.custom_id).removeprefix("story-"))
+            if entry.result.type != "succeeded":
+                log.warning(
+                    "ai.batch_entry_failed", batch_id=batch_id, story_id=sid, kind=entry.result.type
+                )
+                continue
+            msg = entry.result.message
+            if msg.stop_reason == "refusal":
+                out[sid] = None
+                continue
+            _observe("summarize", msg.usage, model=s.ai_summary_model, effort=s.ai_summary_effort)
+            text = "".join(b.text for b in msg.content if b.type == "text").strip()
+            # The prompt's own escape hatch, same as the live path.
+            out[sid] = None if not text or text.rstrip(".") == "SKIP" else text
+        log.info("ai.batch_collected", batch_id=batch_id, n=len(out))
+        return out
+
     async def digest(self, headlines: str) -> str:
         """One roundup of the day from the day's headlines.
 
@@ -174,6 +269,27 @@ class ClaudeClient:
             cat = getattr(resp.stop_details, "category", None) if resp.stop_details else None
             raise Refused(cat)
         _observe("digest", resp.usage, model=s.ai_digest_model, effort=s.ai_digest_effort)
+        return "".join(b.text for b in resp.content if b.type == "text").strip()
+
+    async def weekly(self, headlines: str) -> str:
+        """One roundup of the week, plus where it points.
+
+        A week of headlines is roughly seven times a day's, and the forecast
+        half needs room to reason across them -- hence its own token ceiling
+        rather than the digest's.
+        """
+        s = settings()
+        resp = await self._c.messages.create(
+            model=s.ai_weekly_model,
+            max_tokens=_max_tokens(s.ai_weekly_model, plain=4000, thinking=16000),
+            system=[{"type": "text", "text": WEEKLY_SYSTEM}],
+            **_effort_kwargs(s.ai_weekly_model, s.ai_weekly_effort),
+            messages=[{"role": "user", "content": headlines}],
+        )
+        if resp.stop_reason == "refusal":
+            cat = getattr(resp.stop_details, "category", None) if resp.stop_details else None
+            raise Refused(cat)
+        _observe("weekly", resp.usage, model=s.ai_weekly_model, effort=s.ai_weekly_effort)
         return "".join(b.text for b in resp.content if b.type == "text").strip()
 
     async def distill(self, sentence: str) -> TopicDraft:
@@ -200,7 +316,11 @@ def _render_judge(title: str, body: str, kw: dict[str, object]) -> str:
     )
 
 
-def _observe(stage: str, usage: object, *, model: str = MODEL, effort: str = "-") -> None:
+# `model` has no default on purpose. It used to fall back to a module-level
+# Opus constant, so a call site that forgot the argument would log a model
+# the request never used -- and Opus is banned here, which makes that log
+# line worse than useless.
+def _observe(stage: str, usage: object, *, model: str, effort: str = "-") -> None:
     for field in (
         "input_tokens",
         "output_tokens",

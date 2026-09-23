@@ -9,7 +9,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
@@ -49,6 +49,31 @@ DEFAULT_BLOCK_TERMS: tuple[str, ...] = (
     "maga",
     "truth social",
     "mar a lago",
+    # South Korea, banned 2026-09-07. Each term checked against 19,187 live
+    # articles first.
+    #
+    # "south korean" is listed separately because the gate matches on word
+    # boundaries: "south korea" does NOT hit "South Korean", the trailing "n"
+    # defeats the lookahead.
+    #
+    # Bare "korea"/"korean" are deliberately NOT here. They would match "North
+    # Korean", a different country, and the 14 articles that hit are Lazarus
+    # and IT-worker security reporting the Cybersecurity topic wants. The cost
+    # is real: ~14 South Korea articles say only "Korean" (a lunar orbiter, the
+    # Kospi) and survive. Under-blocking was chosen over deleting another
+    # country's security coverage, which no later edit can bring back.
+    #
+    # "lg" is safe on word boundaries -- all 68 hits were the company, none
+    # were an abbreviation. "seoul" catches an Android game with the city in
+    # its title; three articles, judged acceptable.
+    "south korea",
+    "south korean",
+    "south koreans",
+    "seoul",
+    "kospi",
+    "sk hynix",
+    "hynix",
+    "lg",
 )
 
 # Publishers we do not carry. Distinct from `sites.opt_out_at`, which records
@@ -58,6 +83,21 @@ DEFAULT_BLOCK_TERMS: tuple[str, ...] = (
 #
 # Matched on the registrable domain, subdomains included.
 DEFAULT_BLOCK_SITES: tuple[str, ...] = ("bbc.co.uk",)
+
+# Every per-stage model setting, in one place. A module constant, not a class
+# attribute: a leading-underscore attribute on a pydantic model becomes a
+# private attr that the class itself cannot read back, so the test that checks
+# this list is complete could not import it. Tests assert it covers every
+# `ai_*_model` field, which is what stops a stage added later from being
+# silently unguarded.
+AI_MODEL_FIELDS: tuple[str, ...] = (
+    "ai_model",
+    "ai_distill_model",
+    "ai_summary_model",
+    "ai_answer_model",
+    "ai_weekly_model",
+    "ai_digest_model",
+)
 
 
 class Settings(BaseSettings):
@@ -110,11 +150,12 @@ class Settings(BaseSettings):
     # Summarising runs once per posted story, and it is the most-read output
     # the system produces -- every reader in the channel sees it.
     # Measured 2026-09-01 on live articles against the student-readability
-    # rules in summarize.md: Opus follows them best (mean sentence 17.7 words
-    # vs Haiku's 24.1) but costs $14.66/month against Haiku's $2.13 at 28
+    # rules in summarize.md: Opus followed them best (mean sentence 17.7 words
+    # vs Haiku's 24.1) but cost $14.66/month against Haiku's $2.13 at 28
     # summaries/day. Haiku chosen deliberately -- the gap is real but not worth
-    # 7x. Switch by changing this one line; `_effort_kwargs` and
-    # `_summary_max_tokens` already handle both model families.
+    # 7x, and as of 2026-09-07 the user has settled it: summaries are Haiku,
+    # full stop. `_require_haiku_summaries_and_no_opus` below makes anything
+    # else fail at boot, so this is no longer a one-line switch.
     ai_summary_model: str = "claude-haiku-4-5"
     # Rewriting, not reasoning: the thinking budget buys nothing here, and on
     # Opus it is on by default until told otherwise.
@@ -186,6 +227,163 @@ class Settings(BaseSettings):
     slack_topic_floors: dict[int, float] = Field(default_factory=dict)
     # A backlog is not news. Nothing older than this is ever announced.
     slack_max_age_hours: float = 24.0
+    # Posting cadence. 0 posts a card the moment its story matches -- the
+    # original behaviour. Above 0, a matched story's notify job is delayed to
+    # the next interval boundary, so an interval's cards land together.
+    #
+    # Two reasons, and the second is the expensive one. It is quieter in the
+    # channel, and it gives the summariser a BATCH to work on: an hour's
+    # stories go to the model as one Message Batches submission at 50% off,
+    # instead of N live calls at full price. Measured 2026-09-08 over 14 days:
+    # 2.2 posts in an average active hour, so an hour is the shortest interval
+    # that batches anything at all -- 45% of active hours carry exactly one.
+    slack_post_interval_hours: float = 1.0
+    # Summaries through the Message Batches API rather than one live call per
+    # story. Asynchronous: the card posts on the hour, the summary threads
+    # under it when the batch returns (minutes, not hours, at this size).
+    # False restores the inline call, which is what the notify stage does when
+    # it sees this off.
+    # Which vendor writes the channel's prose -- summaries, the digest, the
+    # weekly roundup, Q&A answers. "gemini" by operator decision 2026-09-23:
+    # the research briefs read better than the Haiku summaries, both run the
+    # same house style, so the difference is the model. Judging and distilling
+    # stay on Claude either way; they return typed objects.
+    ai_writer: Literal["anthropic", "gemini"] = "anthropic"
+    # Parallel Gemini writes. There is no batch endpoint, so a quiet hour's
+    # summaries go out concurrently instead.
+    gemini_concurrency: int = 4
+    # The model that WRITES, separate from the one that researches. Measured
+    # 2026-09-23 on the same live article, same prompt:
+    #
+    #   gemini-3.6-flash       $0.00187/summary   $1.52/month at 27/day
+    #   gemini-3.5-flash-lite  $0.00081/summary   $0.65/month
+    #   haiku-4.5, batched     $0.00090/summary   $0.74/month  (what it replaces)
+    #
+    # Flash-Lite is cheaper than the Haiku batch it replaces AND reads the
+    # same -- and 3.6-flash doubles in price on 2027-01-01, which Flash-Lite
+    # does not. Research keeps `gemini_model`, where depth is worth paying for.
+    gemini_write_model: str = "gemini-3.5-flash-lite"
+    ai_summary_batch: bool = True
+    # How the channel is written to.
+    #
+    #   "cards"  -- one message per story, summary threaded under it. Each
+    #               story gets its own thread, which is what the Q&A listener
+    #               answers in and where a source-count follow-up lands.
+    #   "hourly" -- ONE message an hour carrying every story that hour matched,
+    #               each with its link and its summary inline. Chosen by the
+    #               operator 2026-09-08: 2.2 stories an hour was producing ~4.4
+    #               messages an hour in cards mode, with each summary detached
+    #               from the headline it belonged to.
+    #
+    # "hourly" costs the per-story thread, and with it the Q&A listener's only
+    # place to answer and the follow-up's only place to land. That is the
+    # trade, stated here so it is not rediscovered as a bug.
+    slack_delivery_mode: Literal["cards", "hourly"] = "hourly"
+    # Ceiling on one report. A quiet hour posts what it has; a burst hour is
+    # trimmed to the highest-scoring, because a Slack message has a block limit
+    # and a reader has a scroll limit.
+    hourly_max_stories: int = 25
+    # How long after the interval boundary the report is assembled. Matching
+    # for the stories that arrived at :59 has to finish first; at 17:00 on
+    # 2026-09-08 it had not, and the hour reported three stories with nothing
+    # under them. Clamped to half the interval so a short interval cannot
+    # schedule its report into the next one.
+    hourly_offset_s: float = 240.0
+
+    # --- the daily brief (Gemini + Google Search grounding) ---------------
+    # A second, separate surface: the crawled corpus says what the press
+    # published, the brief says what people actually posted. Inert unless both
+    # the key and the channel are set, the same rule the Slack card path uses
+    # -- a key with no channel researches into the void.
+    #
+    # Read as GEMINI_API_KEY too, because that is the name Google's own
+    # libraries and docs use and an operator will set that one by reflex.
+    gemini_api_key: SecretStr | None = Field(default=None, validation_alias="GEMINI_API_KEY")
+    # gemini-2.5-* returns 404 for new projects as of 2026-09-22; Google's own
+    # error names these as the replacements.
+    # The RESEARCH model. Priced 2026-09-23, per million tokens:
+    #
+    #   gemini-3.5-flash       $1.50 in / $9.00 out
+    #   gemini-3.6-flash       $0.75 / $3.75, doubling to $1.50 / $7.50 on 2027-01-01
+    #   gemini-3.5-flash-lite  $0.30 / $2.50
+    #
+    # So 3.5-flash is the DEARER of the two flashes today, by roughly $0.03 on
+    # a long monthly brief. Grounding dominates either way -- $14 per 1,000
+    # searches on every 3.x model, with 5,000 a month free and shared between
+    # them -- and 3.6-flash answered 503 twice running, which is the reason
+    # this is not simply the cheapest one.
+    gemini_model: str = "gemini-3.5-flash"
+    # Tried when the primary answers 503. Google's flash models go busy in
+    # spikes -- two consecutive runs hit "This model is currently
+    # experiencing high demand" -- and a brief that skips a day because of
+    # one busy afternoon is a worse outcome than a brief from the smaller
+    # model. Empty disables the fallback.
+    gemini_fallback_model: str = "gemini-3.5-flash-lite"
+    gemini_timeout_s: float = 180.0
+    # Where briefs go. Deliberately NOT slack_channel: a research brief is a
+    # different thing from the hourly report and should not compete with it.
+    slack_brief_channel: str | None = None
+    # Local hour (digest_timezone) at which the day's briefs run.
+    brief_hour: int = Field(default=8, ge=0, le=23)
+    # A hard ceiling on grounded searches per day. Grounding is billed per
+    # search the model chooses to run -- and the model chooses, not us, so a
+    # prompt that provokes ten searches costs ten. This is the stop on a bill
+    # that would otherwise be shaped by the model's judgement.
+    #
+    # MEASURED 2026-09-23, not guessed: one prompt about DataAnnotation pay
+    # ran EIGHT searches, because the model split it per company and per
+    # subreddit. The first cap here was 25, which would have silently stopped
+    # after three topics.
+    #
+    # 40 is five topics a day. If the 5,000/month free grounding allowance
+    # applies to this project that is 1,200 searches against it and costs
+    # nothing; if it does not, it is about $17/month at $14 per 1,000 -- which
+    # fits the operator's 200 BRL budget with room, and is the number to check
+    # against real billing after the first week.
+    brief_max_per_day: int = 40
+    # `/techtrend question` is the one entry point a person can fire by hand,
+    # repeatedly, and each one costs 4 to 8 billed searches. The daily cap
+    # above governs the scheduled run; this governs people.
+    brief_questions_per_day: int = 10
+    # Replies in a brief's thread, answered by Gemini without being mentioned.
+    # Off by default: it needs the `message.groups` event subscription in the
+    # Slack app, and a listener that answers unprompted should be a decision
+    # rather than something that starts happening after a deploy.
+    brief_discuss_enabled: bool = False
+    # A thread is the cheapest place for a person to run up a bill -- chatting
+    # costs them nothing and each answer is several billed searches.
+    brief_replies_per_day: int = 30
+    # How long the summarise job waits on its own batch before handing the
+    # batch id to a follow-up job. Well inside `job_lease_minutes` (15) so the
+    # lease cannot expire under a poll that is still running.
+    # A SHORT in-job wait, because the queue is the better place to wait.
+    # Measured on three consecutive ten-request batches: 2 minutes, 8 minutes,
+    # 40 minutes. No in-job wait is both cheap and sufficient, so this covers
+    # only the fast case and `ai_batch_max_polls` covers the rest.
+    ai_batch_max_wait_s: float = 90.0
+    # How many times a follow-up job re-checks a batch before giving up. At
+    # ai_batch_poll_s * 6 per hop that is patience measured in hours, which
+    # the 40-minute batch says is the right order.
+    ai_batch_max_polls: int = 40
+    ai_batch_poll_s: float = 10.0
+    # Ceiling on one submission. The backlog this shipped with was 77 posts;
+    # a cap keeps the first run from being unbounded.
+    ai_summary_batch_max: int = 100
+    # How far back the summarise stage will reach for a card that still has no
+    # summary. Wider than one interval on purpose -- a batch that fails, or a
+    # stage that was off, leaves work behind and this is what picks it up.
+    #
+    # NOT unbounded, for the reason the notify stage bounds its own age: a
+    # stage switched back on must not thread a month of summaries into the
+    # channel. The 78-post backlog this shipped with spanned 30 days; the
+    # older 28 were done once by hand rather than by widening this.
+    slack_summary_max_age_hours: float = 168.0
+    # How many times a card may be sent to the summariser before it is left
+    # alone. The model's own SKIP hatch fires on paywall stubs and nav menus
+    # -- about a third of the first backlog -- and nothing about that is
+    # retryable, so without a cap those stories would be re-submitted every
+    # hour for a week and cost more than the batch discount saves.
+    slack_summary_max_attempts: int = 2
     slack_timeout_s: float = 15.0
     # Post a plain-language summary as a threaded reply under each card.
     # Costs one Haiku call per story; set false to stop spending entirely.
@@ -209,8 +407,17 @@ class Settings(BaseSettings):
     # highest-scoring survive -- a digest of 200 headlines is not a digest.
     digest_max_stories: int = 60
     # Synthesis across the whole day, not a per-article rewrite: this is the
-    # one call that has to decide what actually mattered. Once a day, so even
-    # Opus costs well under a dollar a month.
+    # one call that has to decide what actually mattered. Once a day, so even a
+    # larger model would cost well under a dollar a month -- which is an
+    # argument the Opus ban settles anyway; Sonnet is the only step up left.
+    # The weekly roundup and its forecast. Once a week, so even a larger model
+    # is pennies -- but the forecast half is the reason to consider one.
+    # Ceiling on how many stories are handed to the weekly model. A week is
+    # roughly seven digests, so this is sized above digest_max_stories -- but
+    # a roundup of 400 headlines is not a roundup either.
+    weekly_max_stories: int = 150
+    ai_weekly_model: str = "claude-haiku-4-5"
+    ai_weekly_effort: Effort = "medium"
     ai_digest_model: str = "claude-haiku-4-5"
     ai_digest_effort: Effort = "medium"
 
@@ -235,6 +442,39 @@ class Settings(BaseSettings):
     jwt_secret: SecretStr = SecretStr("dev-secret")
     access_token_ttl_s: int = 900
     refresh_token_ttl_s: int = 90 * 24 * 3600
+
+    @model_validator(mode="after")
+    def _require_haiku_summaries_and_no_opus(self) -> Settings:
+        """Two standing rules, enforced at boot in EVERY environment.
+
+        The user's decision, 2026-09-07: summaries run on Haiku and nothing
+        else, and no stage anywhere runs on Opus. Both were already true by
+        default -- this is what stops an env var quietly undoing them at 3am,
+        which is the whole reason settings are validated at startup.
+
+        `check_production_invariants` was the wrong home: it returns early
+        outside prod, and a local run that bills Opus tokens still bills them.
+
+        Not a Literal on each field, because the model names change faster
+        than this rule does -- the rule is about a family, not an id.
+        """
+        for field in AI_MODEL_FIELDS:
+            model = str(getattr(self, field, "") or "")
+            if "opus" in model.lower():
+                raise ValueError(
+                    f"{field}={model!r}: Opus is banned on this project. "
+                    "Every stage runs on Haiku (see ai_summary_model)."
+                )
+        # The Haiku-only rule is about which ANTHROPIC model may summarise. It
+        # was never a rule about vendors -- the operator switched the writer
+        # to Gemini on 2026-09-23 -- so it applies when Claude is the writer
+        # and says nothing when it is not. The Opus ban above is unconditional
+        # and stays that way.
+        if self.ai_writer == "anthropic" and "haiku" not in self.ai_summary_model.lower():
+            raise ValueError(
+                f"ai_summary_model={self.ai_summary_model!r}: summaries are Haiku only."
+            )
+        return self
 
     @property
     def sync_database_url(self) -> str:

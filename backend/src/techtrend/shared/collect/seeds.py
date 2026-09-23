@@ -40,7 +40,20 @@ TECH: list[Seed] = [
     # ---- Tier A: major tech outlets --------------------------------------
     _s("theverge.com", "The Verge", "A", ["https://www.theverge.com/rss/index.xml"], authority=0.8),
     _s("arstechnica.com", "Ars Technica", "A", ["https://arstechnica.com/feed/"], authority=0.85),
-    _s("techcrunch.com", "TechCrunch", "A", ["https://techcrunch.com/feed/"], authority=0.8),
+    _s(
+        "techcrunch.com",
+        "TechCrunch",
+        "A",
+        [
+            "https://techcrunch.com/feed/",
+            # The venture desk. Probed 2026-09-07: the category feed's 16
+            # items and the main feed's 20 shared not one headline, so the
+            # funding stories are reachable here and, at that moment, only
+            # here.
+            "https://techcrunch.com/category/venture/feed/",
+        ],
+        authority=0.8,
+    ),
     _s("wired.com", "Wired", "A", ["https://www.wired.com/feed/rss"], paywall=True, authority=0.8),
     _s("engadget.com", "Engadget", "A", ["https://www.engadget.com/rss.xml"], authority=0.7),
     _s("zdnet.com", "ZDNET", "A", ["https://www.zdnet.com/news/rss.xml"], authority=0.65),
@@ -331,6 +344,16 @@ HN_VOICE: list[Seed] = [
             "https://hnrss.org/newest?q=nearshore&count=25",
             "https://hnrss.org/newest?q=%22junior+developers%22&count=25",
             "https://hnrss.org/newest?q=freelancing&count=25",
+            # founders and investors -- probed 2026-09-07. `"Show HN"` was
+            # tried and dropped: it returns every side project on the site,
+            # which is a different topic from what founders are building as a
+            # business. A bare `"seed round"` came back half funding
+            # announcements and half unrelated headlines the query matched on
+            # the comment text, so the money side leans on the two terms below.
+            "https://hnrss.org/newest?q=%22startup+idea%22&count=25",
+            "https://hnrss.org/newest?q=bootstrapped&count=25",
+            "https://hnrss.org/newest?q=%22product+market+fit%22&count=25",
+            "https://hnrss.org/newest?q=%22venture+capital%22&count=25",
         ],
         authority=0.55,
     ),
@@ -404,5 +427,159 @@ DEV_MARKET: list[Seed] = [
         # An outsourcing marketplace's own newsroom. Kept for coverage of a
         # beat nobody neutral reports on, at low authority for that reason.
         authority=0.45,
+    ),
+]
+
+
+# Startups, funding and the people writing the cheques -- America and Europe.
+# The existing corpus reports this beat only as a side-effect: probed over 90
+# days, funding language ("seed round", "Series B", "led the round") appears in
+# 126 articles, and 107 of them come from three sites -- SiliconANGLE,
+# TechCrunch and The Next Web. European startup coverage is close to absent.
+# A topic tuned against that corpus would be tuned against a rounding error.
+#
+# Probed 2026-09-07 with the production fetcher, so robots.txt and the real
+# User-Agent applied. Left out after probing rather than added hopefully:
+# tech.eu (robots-blocked -- the obvious European choice, and it says no),
+# pitchbook.com and axios.com (403), fortune.com/section/venture and a16z.com
+# (404), strictlyvc.com (200, newest entry dated 2019 -- a dead feed that
+# answers), siliconcanals.com (200, but the feed carries syndicated psychology
+# filler: "Psychology says people who feel a sense of calm in nature...").
+VENTURE: list[Seed] = [
+    # ---- Europe ----------------------------------------------------------
+    _s(
+        "sifted.eu",
+        "Sifted",
+        "B",
+        ["https://sifted.eu/feed"],
+        # FT-backed and the only European outlet on this beat with a newsroom
+        # rather than a press-release pipeline. Metered, so Read stores the
+        # preview and nothing more -- which is all the matcher reads anyway.
+        paywall=True,
+        authority=0.75,
+    ),
+    _s(
+        "eu-startups.com",
+        "EU-Startups",
+        "B",
+        ["https://www.eu-startups.com/feed/"],
+        authority=0.6,
+    ),
+    _s(
+        "uktech.news",
+        "UKTN",
+        "B",
+        ["https://www.uktech.news/feed"],
+        authority=0.6,
+    ),
+    _s(
+        "techfundingnews.com",
+        "Tech Funding News",
+        "C",
+        ["https://techfundingnews.com/feed/"],
+        # Announcement-led: it reports the round, rarely the story behind it.
+        # Useful for coverage of European raises nobody else writes up, at the
+        # authority that implies.
+        authority=0.45,
+    ),
+    _s(
+        "maddyness.com",
+        "Maddyness UK",
+        "C",
+        ["https://www.maddyness.com/uk/feed/"],
+        # The English edition. The French one is the bigger publication and is
+        # deliberately not seeded: the pipeline is English-only.
+        authority=0.5,
+    ),
+    _s(
+        "arcticstartup.com",
+        "ArcticStartup",
+        "C",
+        ["https://arcticstartup.com/feed/"],
+        # Nordic and Baltic raises, which the London- and Berlin-centred
+        # outlets above mostly skip.
+        authority=0.5,
+    ),
+    # ---- America ---------------------------------------------------------
+    _s(
+        "news.crunchbase.com",
+        "Crunchbase News",
+        "B",
+        ["https://news.crunchbase.com/feed/"],
+        # Written against Crunchbase's own deal data -- the closest thing to a
+        # primary source for US venture funding, the way Hiring Lab is for
+        # hiring.
+        authority=0.7,
+    ),
+]
+
+# Analysis rather than announcement: market sizing, category deep-dives, and
+# founders writing about what they built and why. This is the half of the beat
+# that dates slowly -- a funding round is news for a day, "why vertical SaaS
+# margins are different" is worth reading a month later.
+#
+# Probed 2026-09-07. Left out: every.to and indiehackers.com (200 with zero
+# parseable entries), sacra.com and starterstory.com (404), feld.com (200, but
+# the feed is a personal blog -- home-automation dashboards and book reviews),
+# bothsidesofthetable.com (zero entries), dealroom.co/blog (zero entries).
+ANALYSIS: list[Seed] = [
+    _s(
+        "cbinsights.com",
+        "CB Insights Research",
+        "B",
+        ["https://www.cbinsights.com/research/feed/"],
+        # A research firm's own newsroom: market maps, category sizing, and
+        # the interviews that go with them. Interested in selling reports --
+        # read its market-size numbers the way Nearshore Americas' are read.
+        authority=0.6,
+    ),
+    _s(
+        "stratechery.com",
+        "Stratechery",
+        "B",
+        ["https://stratechery.com/feed/"],
+        paywall=True,
+        authority=0.75,
+    ),
+    _s(
+        "ben-evans.com",
+        "Benedict Evans",
+        "C",
+        ["https://www.ben-evans.com/benedictevans?format=rss"],
+        authority=0.7,
+    ),
+    _s(
+        "tomtunguz.com",
+        "Tomasz Tunguz",
+        "C",
+        ["https://tomtunguz.com/index.xml"],
+        # A VC writing from data rather than from theses. Two entries in the
+        # feed at probe time -- low volume, and that is the point.
+        authority=0.6,
+    ),
+    _s(
+        "lennysnewsletter.com",
+        "Lenny's Newsletter",
+        "C",
+        ["https://www.lennysnewsletter.com/feed"],
+        authority=0.55,
+    ),
+    _s(
+        "saastr.com",
+        "SaaStr",
+        "C",
+        ["https://www.saastr.com/feed/"],
+        # Founder-to-founder operating advice. Opinionated and repetitive by
+        # design; seeded low so it loses ties against reporting.
+        authority=0.45,
+    ),
+    _s(
+        "ycombinator.com",
+        "Y Combinator",
+        "C",
+        ["https://www.ycombinator.com/blog/rss"],
+        # An accelerator talking about itself, which is still the primary
+        # source for what it is funding.
+        authority=0.55,
     ),
 ]

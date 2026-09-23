@@ -13,7 +13,7 @@ import pytest
 from techtrend.api.schemas import CardOut, EventKindIn
 from techtrend.personal.models import EventKind
 from techtrend.personal.rank import Candidate, Weights, apply_caps, dedupe_by_story, rank
-from techtrend.platform.config import Settings
+from techtrend.platform.config import AI_MODEL_FIELDS, Settings
 from techtrend.topic.fingerprint import fingerprint
 
 
@@ -156,3 +156,96 @@ def test_fingerprint_separates_different_topics() -> None:
     a = fingerprint(["AI chip"], [], [], [])
     b = fingerprint(["AI chip"], [], [], ["gaming"])
     assert a != b
+
+
+# --------------------------------------------------- South Korea, 2026-09-07
+
+
+def test_south_korea_is_blocked() -> None:
+    from techtrend.platform.config import settings
+    from techtrend.topic.match import blocked, searchable
+
+    terms = settings().block_terms
+    for title in (
+        "South Korea targets a 2030 Moon landing",
+        "New South Korean 'fake news' law alarms US lawmakers",
+        "SK Hynix to invest $38 billion building memory chip plants",
+        "Save $800 on the LG 65-inch Gallery TV",
+    ):
+        assert blocked(searchable(title, None, []), terms) is not None, title
+
+
+def test_north_korea_survives_the_south_korea_ban() -> None:
+    """A different country. The bare terms "korea"/"korean" are deliberately
+    absent so Lazarus and IT-worker security reporting keeps flowing."""
+    from techtrend.platform.config import settings
+    from techtrend.topic.match import blocked, searchable
+
+    terms = settings().block_terms
+    for title in (
+        "North Korean hackers exploited a Windows zero-day",
+        "North Korean remote IT staffer worked for a US agency, says FBI",
+    ):
+        assert blocked(searchable(title, None, []), terms) is None, title
+
+
+def test_samsung_survives_the_south_korea_ban() -> None:
+    """Kept by explicit operator choice: a Korean company, but the coverage is
+    global phone and chip news rather than a South Korea story."""
+    from techtrend.platform.config import settings
+    from techtrend.topic.match import blocked, searchable
+
+    terms = settings().block_terms
+    assert blocked(searchable("Samsung Galaxy S27 Ultra camera leak", None, []), terms) is None
+
+
+# ---------------------------------------------- the model ban (2026-09-07)
+#
+# Two standing operator rules: summaries run on Haiku and nothing else, and no
+# stage anywhere runs on Opus. Defaults already satisfied both -- these pin
+# that an env var cannot quietly undo them, which is the only way they break.
+
+
+def test_opus_is_refused_for_every_ai_stage() -> None:
+    for field in AI_MODEL_FIELDS:
+        with pytest.raises(Exception):  # noqa: B017 - pydantic ValidationError
+            Settings(**{field: "claude-opus-5"})
+
+
+def test_the_ban_is_on_the_family_not_one_model_id() -> None:
+    """A new Opus release must not walk around a pinned string."""
+    with pytest.raises(Exception):  # noqa: B017 - pydantic ValidationError
+        Settings(ai_model="claude-opus-4-8")
+
+
+def test_summaries_refuse_anything_that_is_not_haiku() -> None:
+    """Sonnet is not Opus, and is still not allowed to write summaries."""
+    with pytest.raises(Exception):  # noqa: B017 - pydantic ValidationError
+        Settings(ai_summary_model="claude-sonnet-5", ai_writer="anthropic")
+
+
+def test_the_haiku_rule_is_about_claude_not_about_vendors() -> None:
+    """It says which ANTHROPIC model may summarise. With Gemini writing, the
+    Claude summary model is unused, and enforcing it would refuse to boot over
+    a setting nothing reads."""
+    assert Settings(ai_writer="gemini", ai_summary_model="claude-sonnet-5").ai_writer == "gemini"
+
+
+def test_the_opus_ban_survives_the_vendor_switch() -> None:
+    """The Opus ban was never conditional and must not become so by accident."""
+    for writer in ("anthropic", "gemini"):
+        with pytest.raises(Exception):  # noqa: B017 - pydantic ValidationError
+            Settings(ai_writer=writer, ai_model="claude-opus-5")
+
+
+def test_every_ai_model_field_is_covered_by_the_guard() -> None:
+    """The guard reads a hand-written tuple. A model setting added later and
+    left out of it would be silently unguarded."""
+    declared = {f for f in Settings.model_fields if f.startswith("ai_") and f.endswith("_model")}
+    assert declared == set(AI_MODEL_FIELDS)
+
+
+def test_the_defaults_already_satisfy_the_ban() -> None:
+    s = Settings()
+    for field in AI_MODEL_FIELDS:
+        assert "haiku" in getattr(s, field).lower(), field

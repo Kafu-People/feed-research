@@ -133,3 +133,188 @@ async def test_fake_client_declines_thin_text() -> None:
 
     assert await FakeAIClient().summarize("T", "short") is None
     assert await FakeAIClient().summarize("T", "x" * 500) is not None
+
+
+# ------------------------------------------- hourly batching (2026-09-08)
+
+
+def test_delay_to_boundary_lands_on_the_hour() -> None:
+    """Cards wait for the interval boundary so an hour's worth post together."""
+    from techtrend.topic.worker import _delay_to_boundary
+
+    # 10:00:00 exactly -> a full hour to the next boundary, never 0, or a
+    # story matched on the hour would post immediately and miss its batch.
+    assert _delay_to_boundary(now=3600.0 * 10) == 3600.0
+    # 10:59:00 -> 60s. The 10:01 story and this one wake in the same claim.
+    assert _delay_to_boundary(now=3600.0 * 10 + 3540) == 60.0
+
+
+def test_interval_zero_restores_immediate_posting(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The old behaviour is still reachable, and is exactly delay 0."""
+    from techtrend.platform.config import settings
+    from techtrend.topic.worker import _delay_to_boundary
+
+    monkeypatch.setenv("TT_SLACK_POST_INTERVAL_HOURS", "0")
+    settings.cache_clear()
+    try:
+        assert _delay_to_boundary(now=1234.5) == 0.0
+    finally:
+        settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_batch_returns_one_entry_per_story() -> None:
+    """The batch path's contract: a mapping keyed by story id, values that may
+    be None. The caller reads `summary_ts IS NULL` as its work queue, so a
+    missing key and a None must both leave the story retryable."""
+    from techtrend.ai.fake import FakeAIClient
+
+    out = await FakeAIClient().summarize_batch(
+        [(1, "Long one", "x" * 500), (2, "Thin one", "short")]
+    )
+    assert set(out) == {1, 2}
+    assert out[1] is not None
+    assert out[2] is None  # declined, and stays unsummarised
+
+
+def test_batch_pending_carries_the_receipt() -> None:
+    """A batch that outlives the poll is not a failure -- the id is how the
+    follow-up job collects it instead of paying for the work twice."""
+    from techtrend.ai.claude import BatchPending
+
+    assert BatchPending("msgbatch_123").batch_id == "msgbatch_123"
+
+
+# ------------------------------------------- the hourly report (2026-09-08)
+
+
+class _Row:
+    """The columns `_render` reads. A namespace, not a model -- the query
+    returns a row, and the renderer must not care which."""
+
+    def __init__(self, **kw: object) -> None:
+        self.__dict__.update(
+            {
+                "id": 1,
+                "title": "T",
+                "url": "https://e.com/a",
+                "site": "Example",
+                "source_count": 1,
+                "topic_ids": [3],
+                "topic_titles": ["AI models & labs"],
+                "scores": [0.8],
+                **kw,
+            }
+        )
+
+
+def test_report_decodes_entities_before_escaping() -> None:
+    """A title arrives as `Here&#8217;s`. Escaping that without decoding first
+    ships a literal `&amp;#8217;` -- the trap slack.py's `_esc` documents."""
+    from datetime import UTC, datetime
+
+    from techtrend.deliver.hourly import _render
+
+    now = datetime.now(UTC)
+    _, blocks = _render([_Row(title="Here&#8217;s the news &mdash; really")], {1: "S."}, now, now)
+    body = "".join(b["text"]["text"] for b in blocks if b["type"] == "section")
+    assert "&#8217;" not in body
+    assert "&mdash;" not in body
+    assert "Here\u2019s the news \u2014 really" in body
+
+
+def test_report_link_text_cannot_break_slack_markup() -> None:
+    """A bare | or > inside <url|text> ends the link early."""
+    from datetime import UTC, datetime
+
+    from techtrend.deliver.hourly import _render
+
+    now = datetime.now(UTC)
+    _, blocks = _render([_Row(title="A | B > C")], {1: "S."}, now, now)
+    link = [b for b in blocks if b["type"] == "section"][0]["text"]["text"]
+    assert "A ❘ B &gt; C" in link
+
+
+def test_report_carries_the_summary_under_the_link() -> None:
+    """The whole point of the format: link and summary in one message."""
+    from datetime import UTC, datetime
+
+    from techtrend.deliver.hourly import _render
+
+    now = datetime.now(UTC)
+    _, blocks = _render([_Row()], {1: "The plain-language version."}, now, now)
+    body = [b for b in blocks if b["type"] == "section"][0]["text"]["text"]
+    assert "https://e.com/a" in body
+    assert "The plain-language version." in body
+
+
+def test_report_survives_a_story_with_no_summary() -> None:
+    """A declined summary loses the prose, never the link."""
+    from datetime import UTC, datetime
+
+    from techtrend.deliver.hourly import _render
+
+    now = datetime.now(UTC)
+    _, blocks = _render([_Row()], {}, now, now)
+    body = [b for b in blocks if b["type"] == "section"][0]["text"]["text"]
+    assert "https://e.com/a" in body
+
+
+def test_slow_batch_is_rescheduled_not_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A batch that is merely slow must not spend the queue's error retries.
+
+    On 2026-09-08 a 40-minute batch raised BatchPending out of the collect
+    job five times and succeeded on the last attempt allowed -- a report
+    already paid for, one delay from being dropped. The collect path now
+    checks status once and re-enqueues itself.
+    """
+    import asyncio
+
+    from techtrend.deliver import hourly
+
+    enqueued: list[tuple[str, str, dict]] = []
+
+    class _Never:
+        async def batch_ended(self, batch_id: str) -> bool:
+            return False
+
+        async def read_batch(self, batch_id: str) -> dict:
+            raise AssertionError("must not read a batch that has not ended")
+
+    async def _fake_enqueue(stage, key, payload=None, **kw):
+        enqueued.append((stage, key, payload or {}))
+        return True
+
+    monkeypatch.setattr(hourly, "ai_client", lambda: _Never())
+    monkeypatch.setattr(hourly.queue, "enqueue", _fake_enqueue)
+
+    asyncio.run(hourly._collect("msgbatch_x", {"tries": 1, "story_ids": [1]}, "#c"))
+    assert len(enqueued) == 1
+    stage, key, payload = enqueued[0]
+    assert stage == "hourly"
+    assert key.endswith(":2")  # a NEW key, or ON CONFLICT would swallow it
+    assert payload["tries"] == 2
+
+
+def test_batch_polling_gives_up_eventually(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bounded patience: a batch that never ends must not reschedule forever."""
+    import asyncio
+
+    from techtrend.deliver import hourly
+    from techtrend.platform.config import settings
+
+    enqueued: list = []
+
+    class _Never:
+        async def batch_ended(self, batch_id: str) -> bool:
+            return False
+
+    async def _fake_enqueue(*a, **kw):
+        enqueued.append(a)
+        return True
+
+    monkeypatch.setattr(hourly, "ai_client", lambda: _Never())
+    monkeypatch.setattr(hourly.queue, "enqueue", _fake_enqueue)
+    cap = settings().ai_batch_max_polls
+    asyncio.run(hourly._collect("msgbatch_x", {"tries": cap, "story_ids": [1]}, "#c"))
+    assert enqueued == []

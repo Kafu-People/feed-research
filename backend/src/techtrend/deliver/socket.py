@@ -56,7 +56,42 @@ async def _bot_id(bot_token: str) -> str | None:
 
 async def _dispatch(client: SlackClient, envelope: dict[str, Any], bot_id: str | None) -> None:
     payload = envelope.get("payload") or {}
+
+    # Slash commands ride the SAME socket as events -- that is what makes
+    # `/techtrend` possible here at all, with no public Request URL for Slack
+    # to POST to. They arrive as their own envelope type, with the command in
+    # the payload rather than in an `event`.
+    if envelope.get("type") == "slash_commands":
+        from techtrend.deliver import commands
+
+        await commands.handle(payload)
+        return
+
     event = payload.get("event") or {}
+
+    # A plain message in the briefs channel's thread. No mention needed:
+    # a thread under a brief is a conversation about that brief, and asking
+    # people to type `@techtrend` first is friction for no benefit.
+    if event.get("type") == "message":
+        from techtrend.deliver import discuss
+
+        own = bool(bot_id and event.get("bot_id") == bot_id)
+        # One line per message event, with the reason it was or was not
+        # taken. Without it "I sent a message and nothing happened" has three
+        # possible causes -- no subscription, wrong channel, wrong shape --
+        # and no way to tell them apart from outside.
+        telemetry.log.info(
+            "slackbot.message",
+            channel=event.get("channel"),
+            channel_type=event.get("channel_type"),
+            threaded=bool(event.get("thread_ts")),
+            own=own,
+            subtype=event.get("subtype"),
+        )
+        if event.get("channel_type") in ("channel", "group") and not own:
+            await discuss.handle(event, bot_id=bot_id)
+        return
+
     if event.get("type") != "app_mention":
         return
     # Our own messages come back down the socket; answering them would loop.

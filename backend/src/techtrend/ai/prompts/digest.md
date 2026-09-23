@@ -27,10 +27,27 @@ routine noise: minor app updates, deal roundups, listicles, review posts.
 If the day was genuinely thin, say so in one line rather than inflating three
 weak stories into themes.
 
-## Style — write so a student understands it
+## Style — write so a second-language reader understands it
 
-The test: a 15-year-old who likes technology but has never worked in it should
-understand every sentence without looking anything up. Same facts, plainer words.
+The test: a smart adult who reads English as a SECOND language should
+understand every sentence without looking anything up. Same facts, plainer
+words. Not a native 15-year-old — that reader knows idioms, and this one does
+not.
+
+### No idioms, no phrasal verbs
+The reader knows technology. They do not know English idioms, and they will
+stop reading rather than ask. If a phrase means something other than its
+words, replace it with the plain verb.
+
+    no:   rolled out, doubled down, walked back, ramped up, came up with
+    yes:  released, repeated, took back, increased, invented
+
+Pick the commoner of two words that mean the same thing, and say who did what:
+"Google raised the price", not "the price was raised by Google".
+
+    no:   acquire, attempt, utilise, approximately, numerous, subsequently
+    yes:  buy, try, use, about, many, later
+
 
 ## Short sentences
 Long sentences are the main thing that makes writing hard to read. Do not count

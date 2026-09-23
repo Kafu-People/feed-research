@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import html
 import re
+import textwrap
 from typing import Any
 
 import httpx
@@ -19,6 +20,7 @@ _POST = "https://slack.com/api/chat.postMessage"
 _REPLIES = "https://slack.com/api/conversations.replies"
 _LIST = "https://slack.com/api/conversations.list"
 _PERMALINK = "https://slack.com/api/chat.getPermalink"
+_UPDATE = "https://slack.com/api/chat.update"
 
 # chat.postMessage accepts "#name" or an id; chat.delete, conversations.replies
 # and chat.getPermalink all require the ID. Resolved once, then cached for the
@@ -109,6 +111,35 @@ class SlackClient:
         _raise_for(data)
         return str(data["ts"])
 
+    async def update(
+        self,
+        channel: str,
+        ts: str,
+        text: str,
+        blocks: list[dict[str, Any]] | None = None,
+    ) -> None:
+        """Rewrite a message in place.
+
+        What makes a progress note possible without leaving litter: post
+        "looking into it", then replace that same message with the answer.
+        Two messages would mean two notifications for one question.
+
+        `channel` must be an ID here, as it must for every conversations.*
+        call -- chat.update is the exception among chat.* in not resolving a
+        #name.
+        """
+        body: dict[str, Any] = {"channel": channel, "ts": ts, "text": text}
+        if blocks is not None:
+            body["blocks"] = blocks
+        async with httpx.AsyncClient(timeout=settings().slack_timeout_s) as c:
+            try:
+                resp = await c.post(_UPDATE, headers=self._headers, json=body)
+            except httpx.HTTPError as e:
+                raise queue.RetryableError(f"slack unreachable: {e!r}") from e
+        if resp.status_code != httpx.codes.OK:
+            raise queue.RetryableError(f"slack http {resp.status_code}")
+        _raise_for(resp.json())
+
     async def channel_id(self, channel: str) -> str:
         """Resolve "#name" to a channel id. Ids pass through untouched."""
         if not channel.startswith("#"):
@@ -191,13 +222,133 @@ def to_mrkdwn(text: str) -> str:
     return text.strip()
 
 
+_TABLE_LINE = re.compile(r"^\s*\|.*\|\s*$")
+_TABLE_RULE = re.compile(r"^[\s|:\-]+$")
+
+
+def _cells(line: str) -> list[str]:
+    """Split one markdown table row. Leading and trailing pipes are borders,
+    not empty cells."""
+    inner = line.strip().strip("|")
+    return [c.strip() for c in inner.split("|")]
+
+
+def _fixed_width_table(rows: list[list[str]]) -> str:
+    """A markdown table as an aligned monospace block.
+
+    Slack renders NO table. A pipe grid posted as mrkdwn is literal text in a
+    proportional font, so the columns wander and the thing is unreadable --
+    which is exactly what shipped. A fenced code block is the one place Slack
+    uses a fixed-width font, so padded columns actually line up there.
+
+    Long cells WRAP onto continuation lines rather than being cut. The first
+    version truncated at 24 characters with an ellipsis, which silently threw
+    away the half of every sentence that carried the point -- and a chat
+    message offers nothing to click to see the rest. A table that loses its
+    content is not a table.
+
+    Emphasis is stripped and entities decoded because neither renders inside
+    a fence: `*Outlier*` would show its asterisks and `&amp;` its markup.
+    """
+    width = len(max(rows, key=len))
+    grid = [r + [""] * (width - len(r)) for r in rows]
+    clean = [
+        [html.unescape(_MD_BOLD.sub(r"\1", c)).replace("*", "").replace("`", "") for c in r]
+        for r in grid
+    ]
+    # Wrap width per column: the longest cell, capped so one wordy column
+    # cannot push the rest off the side of the screen.
+    caps = [min(30, max(len(r[i]) for r in clean) or 1) for i in range(width)]
+
+    out: list[str] = []
+    for n, row in enumerate(clean):
+        # Each cell becomes a list of lines; the row is as tall as its
+        # tallest cell, and shorter cells are padded with blanks.
+        wrapped = [textwrap.wrap(c, caps[i]) or [""] for i, c in enumerate(row)]
+        height = max(len(w) for w in wrapped)
+        for line_no in range(height):
+            cells = [
+                (w[line_no] if line_no < len(w) else "").ljust(caps[i])
+                for i, w in enumerate(wrapped)
+            ]
+            out.append("  ".join(cells).rstrip())
+        if n == 0:  # a rule under the header, drawn rather than transcribed
+            out.append("  ".join("-" * w for w in caps))
+    return "```\n" + "\n".join(out) + "\n```"
+
+
+def _tables_to_blocks(text: str) -> str:
+    """Rewrite every markdown table in `text` as a monospace block."""
+    out: list[str] = []
+    rows: list[list[str]] = []
+
+    def flush() -> None:
+        if rows:
+            out.append(_fixed_width_table(rows))
+            rows.clear()
+
+    for line in text.split("\n"):
+        if _TABLE_LINE.match(line):
+            # `| :--- | :--- |` is drawing, not data.
+            if not _TABLE_RULE.match(line):
+                rows.append(_cells(line))
+            continue
+        flush()
+        out.append(line)
+    flush()
+    return "\n".join(out)
+
+
+def to_slack_report(text: str) -> str:
+    """Model markdown -> Slack mrkdwn, KEEPING the structure.
+
+    The opposite job from `to_mrkdwn`, which strips headings and bullets and
+    folds bold into code spans. That is right for a three-sentence summary,
+    where emphasis is the only structure there is. It is wrong for a research
+    brief: a report of six sections and seventeen platforms arrived as one
+    unbroken wall, because every heading and bullet the model wrote was
+    deleted on the way out.
+
+    Slack has no heading syntax, so a heading becomes bold on its own line --
+    which is what a heading looks like in Slack, and what Slack's own product
+    does. Markdown bullets become the literal bullet character, because
+    `- item` renders as a dash and `• item` renders as a list.
+    """
+
+    # Headings first: `## 2. Fields` -> `*2. Fields*`. Done before the bold
+    # rules so the line is not left with stray asterisks to fold.
+    def _head(m: re.Match[str]) -> str:
+        title = m.group(2).strip().rstrip("*").strip()
+        return f"*{title}*" if title else ""
+
+    # `[ \t]*$`, not `\s*$`: `\s` matches newlines, so the greedy version ate
+    # the blank line after every heading and welded it to its own paragraph.
+    text = re.sub(r"^[ \t]{0,3}(#{1,6})[ \t]+(.+?)[ \t]*$", _head, text, flags=re.M)
+    text = _MD_BOLD.sub(r"*\1*", text)  # **x** -> *x*, Slack's own bold
+    text = _MD_UNDER.sub(r"*\1*", text)
+    # `- item`, `* item`, `+ item` -> `• item`, indentation preserved so a
+    # nested list still reads as nested.
+    text = re.sub(r"^(\s{0,8})[-*+][ \t]+", r"\1• ", text, flags=re.M)
+    # Tables LAST: the cell contents have had their emphasis normalised by
+    # now, and the code block that follows must not have Slack markup inside.
+    return _tables_to_blocks(text).strip()
+
+
 def _trunc(s: str, n: int) -> str:
     return s if len(s) <= n else s[: n - 1].rstrip() + "…"
 
 
-def _decode(s: str) -> str:
-    """Publisher titles arrive with HTML entities intact: `Here&#8217;s`."""
+def decode_title(s: str) -> str:
+    """Publisher titles arrive with HTML entities intact: `Here&#8217;s`.
+
+    Public because the hourly report builds its own link text and needs the
+    same decode; a second copy of `html.unescape` is how one surface quietly
+    starts shipping `&amp;#8217;` while the other does not.
+    """
     return html.unescape(s)
+
+
+_decode = decode_title
 
 
 def _esc_only(s: str) -> str:
