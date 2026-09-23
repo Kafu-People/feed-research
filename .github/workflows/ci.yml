@@ -36,15 +36,18 @@ jobs:
       # with no endpoint configured, boto3 falls back to its default
       # credential chain, and a runner has no credentials to find.
       #
-      # `docker run`, not a service container: the official image needs the
-      # command `server /data`, and a service container cannot set one. The
-      # first attempt used bitnami/minio to dodge that, and its `latest` tag
-      # no longer exists. Same image as docker-compose uses locally.
+      # `docker run`, not a service container: the image needs the command
+      # `server /data`, and a service container cannot set one.
+      #
+      # quay.io, not Docker Hub. `minio/minio` there now answers "pull access
+      # denied", and `bitnami/minio:latest` no longer exists at all -- both
+      # tried, both failed the build. quay.io is MinIO's own registry, and
+      # this exact image and health check were pulled and run before pushing.
       - name: Start MinIO
         run: |
           docker run -d --name minio -p 9000:9000 \
             -e MINIO_ROOT_USER=dev -e MINIO_ROOT_PASSWORD=devdevdev \
-            minio/minio server /data
+            quay.io/minio/minio server /data
           for i in $(seq 1 40); do
             if curl -fsS http://localhost:9000/minio/health/live; then
               echo "MinIO ready"; exit 0
