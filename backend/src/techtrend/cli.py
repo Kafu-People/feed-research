@@ -409,6 +409,12 @@ async def _maintenance(job: queue.Job) -> None:
         telemetry.log.info("jobs.purged", count=purged)
 
 
+async def _discuss(job: queue.Job) -> None:
+    from techtrend.deliver import discuss as discuss_worker
+
+    await discuss_worker.run(job)
+
+
 async def _brief(job: queue.Job) -> None:
     from techtrend.deliver import brief as brief_worker
 
@@ -439,6 +445,7 @@ HANDLERS = {
     "summarize": _summarize,
     "hourly": _hourly,
     "brief": _brief,
+    "discuss": _discuss,
     "maintenance": _maintenance,
 }
 

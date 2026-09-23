@@ -308,6 +308,14 @@ class Settings(BaseSettings):
     # repeatedly, and each one costs 4 to 8 billed searches. The daily cap
     # above governs the scheduled run; this governs people.
     brief_questions_per_day: int = 10
+    # Replies in a brief's thread, answered by Gemini without being mentioned.
+    # Off by default: it needs the `message.groups` event subscription in the
+    # Slack app, and a listener that answers unprompted should be a decision
+    # rather than something that starts happening after a deploy.
+    brief_discuss_enabled: bool = False
+    # A thread is the cheapest place for a person to run up a bill -- chatting
+    # costs them nothing and each answer is several billed searches.
+    brief_replies_per_day: int = 30
     # How long the summarise job waits on its own batch before handing the
     # batch id to a follow-up job. Well inside `job_lease_minutes` (15) so the
     # lease cannot expire under a poll that is still running.

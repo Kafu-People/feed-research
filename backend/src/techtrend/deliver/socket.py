@@ -68,6 +68,19 @@ async def _dispatch(client: SlackClient, envelope: dict[str, Any], bot_id: str |
         return
 
     event = payload.get("event") or {}
+
+    # A plain message in the briefs channel's thread. No mention needed:
+    # a thread under a brief is a conversation about that brief, and asking
+    # people to type `@techtrend` first is friction for no benefit.
+    if event.get("type") == "message":
+        from techtrend.deliver import discuss
+
+        if event.get("channel_type") in ("channel", "group") and not (
+            bot_id and event.get("bot_id") == bot_id
+        ):
+            await discuss.handle(event, bot_id=bot_id)
+        return
+
     if event.get("type") != "app_mention":
         return
     # Our own messages come back down the socket; answering them would loop.
