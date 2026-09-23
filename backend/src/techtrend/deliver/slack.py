@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import html
 import re
+import textwrap
 from typing import Any
 
 import httpx
@@ -210,28 +211,37 @@ def _fixed_width_table(rows: list[list[str]]) -> str:
     which is exactly what shipped. A fenced code block is the one place Slack
     uses a fixed-width font, so padded columns actually line up there.
 
-    Emphasis is stripped from the cells: inside a code block Slack renders no
-    bold, so `*Outlier*` would show its asterisks.
+    Long cells WRAP onto continuation lines rather than being cut. The first
+    version truncated at 24 characters with an ellipsis, which silently threw
+    away the half of every sentence that carried the point -- and a chat
+    message offers nothing to click to see the rest. A table that loses its
+    content is not a table.
+
+    Emphasis is stripped and entities decoded because neither renders inside
+    a fence: `*Outlier*` would show its asterisks and `&amp;` its markup.
     """
     width = len(max(rows, key=len))
     grid = [r + [""] * (width - len(r)) for r in rows]
-    # `html.unescape` matters INSIDE the fence specifically: Slack decodes
-    # entities in ordinary mrkdwn but not in a code block, so `&amp;` shows
-    # its own markup there. It also skews the padding, since `&amp;` measures
-    # five characters where `&` measures one.
     clean = [
         [html.unescape(_MD_BOLD.sub(r"\1", c)).replace("*", "").replace("`", "") for c in r]
         for r in grid
     ]
-    # Cap a column so one long cell cannot push every other column off screen.
-    caps = [min(24, max(len(r[i]) for r in clean)) for i in range(width)]
-    out = []
+    # Wrap width per column: the longest cell, capped so one wordy column
+    # cannot push the rest off the side of the screen.
+    caps = [min(30, max(len(r[i]) for r in clean) or 1) for i in range(width)]
+
+    out: list[str] = []
     for n, row in enumerate(clean):
-        cells = [
-            (c if len(c) <= caps[i] else c[: caps[i] - 1] + "\u2026").ljust(caps[i])
-            for i, c in enumerate(row)
-        ]
-        out.append("  ".join(cells).rstrip())
+        # Each cell becomes a list of lines; the row is as tall as its
+        # tallest cell, and shorter cells are padded with blanks.
+        wrapped = [textwrap.wrap(c, caps[i]) or [""] for i, c in enumerate(row)]
+        height = max(len(w) for w in wrapped)
+        for line_no in range(height):
+            cells = [
+                (w[line_no] if line_no < len(w) else "").ljust(caps[i])
+                for i, w in enumerate(wrapped)
+            ]
+            out.append("  ".join(cells).rstrip())
         if n == 0:  # a rule under the header, drawn rather than transcribed
             out.append("  ".join("-" * w for w in caps))
     return "```\n" + "\n".join(out) + "\n```"

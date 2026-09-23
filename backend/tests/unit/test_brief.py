@@ -682,3 +682,32 @@ def test_the_prompt_asks_part_one_for_prose_and_part_two_for_tables() -> None:
     part_two = _STYLE[_STYLE.index("PART TWO") :]
     assert "tables" in part_two
     assert "Four or\nfive columns at most" in part_two
+
+
+def test_a_long_cell_wraps_and_loses_nothing() -> None:
+    """The first version cut cells at 24 characters with an ellipsis, which
+    threw away the half of every sentence that carried the point -- and a
+    chat message offers nothing to click to see the rest."""
+    from techtrend.deliver.slack import to_slack_report
+
+    long = "Meta bought 49% of Scale AI for $14.3 billion in 2025"
+    out = to_slack_report(f"| Metric | Details |\n| :--- | :--- |\n| Deal | {long} |")
+    assert "\u2026" not in out
+    # Every word survives, spread over continuation lines.
+    flat = " ".join(out.split())
+    for word in ("Meta", "49%", "Scale", "$14.3", "billion", "2025"):
+        assert word in flat
+
+
+def test_wrapped_rows_stay_aligned() -> None:
+    """Wrapping is only useful if the columns still line up under it."""
+    from techtrend.deliver.slack import to_slack_report
+
+    out = to_slack_report(
+        "| A | B |\n| :--- | :--- |\n| short | a much longer cell that has to wrap somewhere |"
+    )
+    body = [ln for ln in out.split("\n") if ln and "`" not in ln]
+    rule = body[1]
+    assert set(rule) <= {"-", " "}
+    # The second column starts at the same offset on the header and the rule.
+    assert body[0].index("B") == rule.index(" ") + 2
