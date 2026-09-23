@@ -20,12 +20,13 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import text
 
 from techtrend.ai.claude import BatchPending
 from techtrend.ai.client import client as ai_client
-from techtrend.deliver.slack import SlackClient, decode_title, to_mrkdwn
+from techtrend.deliver.slack import Block, SlackClient, decode_title, to_mrkdwn
 from techtrend.platform import blobs, queue, telemetry
 from techtrend.platform.config import settings, site_blocked
 from techtrend.platform.db import session_scope
@@ -157,7 +158,7 @@ async def run(job: queue.Job) -> None:
     telemetry.log.info("hourly.posted", ts=ts, stories=len(keep), channel=channel)
 
 
-async def _collect(batch_id: str, payload: dict, channel: str) -> None:
+async def _collect(batch_id: str, payload: dict[str, Any], channel: str) -> None:
     """Finish a report whose batch outlived the poll.
 
     Checks status ONCE and reschedules itself if the batch is still running.
@@ -200,7 +201,7 @@ async def _collect(batch_id: str, payload: dict, channel: str) -> None:
 
 
 async def _summaries(
-    rows: list, *, since: datetime, until: datetime
+    rows: list[Any], *, since: datetime, until: datetime
 ) -> dict[int, str | None] | None:
     """One batch for the hour. None means "deferred, not failed"."""
     s = settings()
@@ -243,12 +244,12 @@ async def _summaries(
 
 
 def _render(
-    rows: list, summaries: dict[int, str | None], since: datetime, until: datetime
-) -> tuple[str, list[dict]]:
+    rows: list[Any], summaries: dict[int, str | None], since: datetime, until: datetime
+) -> tuple[str, list[Block]]:
     """(fallback, blocks). One section per story: link, source line, summary."""
     label = until.strftime("%H:%M")
     heading = f"TechTrend — the last hour ({len(rows)} {'story' if len(rows) == 1 else 'stories'})"
-    blocks: list[dict] = [
+    blocks: list[Block] = [
         {"type": "header", "text": {"type": "plain_text", "text": heading, "emoji": True}},
         {
             "type": "context",

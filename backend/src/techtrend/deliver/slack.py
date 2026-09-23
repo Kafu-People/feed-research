@@ -16,6 +16,11 @@ import httpx
 from techtrend.platform import queue
 from techtrend.platform.config import settings
 
+# One Block Kit block. Every surface that builds Slack messages annotates
+# with this rather than a bare `dict`, which mypy rejects under
+# disallow_any_generics -- 39 of the 70 errors CI failed on were that.
+Block = dict[str, Any]
+
 _POST = "https://slack.com/api/chat.postMessage"
 _REPLIES = "https://slack.com/api/conversations.replies"
 _LIST = "https://slack.com/api/conversations.list"
@@ -149,7 +154,13 @@ class SlackClient:
         cursor = ""
         async with httpx.AsyncClient(timeout=settings().slack_timeout_s) as c:
             while True:
-                params = {"types": "public_channel", "limit": 1000, "exclude_archived": "true"}
+                # All strings: a mixed dict infers as dict[str, object], which
+                # httpx's params type does not accept.
+                params: dict[str, str] = {
+                    "types": "public_channel",
+                    "limit": "1000",
+                    "exclude_archived": "true",
+                }
                 if cursor:
                     params["cursor"] = cursor
                 body = (await c.get(_LIST, headers=self._headers, params=params)).json()
@@ -181,7 +192,7 @@ class SlackClient:
                 resp = await c.get(
                     _REPLIES,
                     headers=self._headers,
-                    params={"channel": channel, "ts": thread_ts, "limit": limit},
+                    params={"channel": channel, "ts": thread_ts, "limit": str(limit)},
                 )
             except httpx.HTTPError as e:
                 raise queue.RetryableError(f"slack unreachable: {e!r}") from e

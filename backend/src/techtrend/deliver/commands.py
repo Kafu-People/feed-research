@@ -22,6 +22,7 @@ from typing import Any
 import httpx
 from sqlalchemy import text
 
+from techtrend.deliver.slack import Block
 from techtrend.platform import telemetry
 from techtrend.platform.config import settings
 from techtrend.platform.db import session_scope
@@ -34,7 +35,7 @@ def _short(s: str, limit: int = 900) -> str:
     return s if len(s) <= limit else s[: limit - 1].rstrip() + "…"
 
 
-def _blocks(*, title: str, body: str, note: str | None = None) -> list[dict]:
+def _blocks(*, title: str, body: str, note: str | None = None) -> list[Block]:
     """One shape for every reply: a bold title, the body, a quiet note.
 
     Slash-command replies used to be a single run of text with markdown in it.
@@ -42,7 +43,7 @@ def _blocks(*, title: str, body: str, note: str | None = None) -> list[dict]:
     line no louder than the example under it. Block Kit is what gives a reply
     a shape, and `context` is what makes a hint read as a hint.
     """
-    out: list[dict] = [
+    out: list[Block] = [
         {"type": "section", "text": {"type": "mrkdwn", "text": f"*{title}*\n{body}"}}
     ]
     if note:
@@ -50,7 +51,7 @@ def _blocks(*, title: str, body: str, note: str | None = None) -> list[dict]:
     return out
 
 
-HELP_BLOCKS = [
+HELP_BLOCKS: list[Block] = [
     {
         "type": "header",
         "text": {"type": "plain_text", "text": "TechTrend briefs", "emoji": True},
@@ -177,6 +178,7 @@ async def handle(payload: dict[str, Any]) -> None:
     verb, _, rest = args.partition(" ")
     verb, rest = verb.strip().lower(), rest.strip()
 
+    reply: tuple[str, list[Block]]
     try:
         if verb in ("", "help"):
             reply = ("TechTrend briefs", HELP_BLOCKS)
@@ -214,7 +216,7 @@ async def handle(payload: dict[str, Any]) -> None:
     await _respond(response_url, *reply)
 
 
-async def _do_question(rest: str, user: str | None) -> tuple[str, list[dict]]:
+async def _do_question(rest: str, user: str | None) -> tuple[str, list[Block]]:
     """Research one question now, and save nothing.
 
     Rate-limited against the `jobs` table rather than a new counter: a
@@ -264,7 +266,7 @@ async def _do_question(rest: str, user: str | None) -> tuple[str, list[dict]]:
     )
 
 
-async def _do_list() -> tuple[str, list[dict]]:
+async def _do_list() -> tuple[str, list[Block]]:
     async with session_scope() as s:
         rows = (await s.execute(_LIST)).all()
     if not rows:
@@ -276,7 +278,7 @@ async def _do_list() -> tuple[str, list[dict]]:
                 note="_Example:_ `/techtrend add mercor What are people saying about Mercor pay?`",
             ),
         )
-    blocks: list[dict] = [
+    blocks: list[Block] = [
         {
             "type": "header",
             "text": {
@@ -302,7 +304,7 @@ async def _do_list() -> tuple[str, list[dict]]:
     return (f"{len(rows)} topics on the watchlist", blocks)
 
 
-async def _do_add(rest: str, user: str | None) -> tuple[str, list[dict]]:
+async def _do_add(rest: str, user: str | None) -> tuple[str, list[Block]]:
     name, _, prompt = rest.partition(" ")
     name, prompt = name.strip().lower(), prompt.strip()
     note: str | None = None
@@ -360,7 +362,7 @@ async def _do_add(rest: str, user: str | None) -> tuple[str, list[dict]]:
     )
 
 
-async def _do_edit(rest: str) -> tuple[str, list[dict]]:
+async def _do_edit(rest: str) -> tuple[str, list[Block]]:
     """Replace the prompt on a topic that already exists.
 
     Distinct from `add`, which upserts. `add` on a name that exists quietly
@@ -410,7 +412,7 @@ async def _do_edit(rest: str) -> tuple[str, list[dict]]:
     )
 
 
-async def _do_remove(rest: str) -> tuple[str, list[dict]]:
+async def _do_remove(rest: str) -> tuple[str, list[Block]]:
     name = rest.strip().lower()
     if not name:
         return ("Which one?", _blocks(title="Which one?", body="`/techtrend remove <name>`"))
@@ -435,7 +437,7 @@ async def _do_remove(rest: str) -> tuple[str, list[dict]]:
     )
 
 
-async def _do_run(rest: str) -> tuple[str, list[dict]]:
+async def _do_run(rest: str) -> tuple[str, list[Block]]:
     """Queue one brief now. The work is a job, not this handler: Slack wants
     an ack in 3 seconds and a grounded search takes far longer."""
     from techtrend.deliver.brief import CADENCES
@@ -500,7 +502,7 @@ def _bucket() -> int:
     return int(time.time() // 60)
 
 
-async def _respond(response_url: str, text_: str, blocks: list[dict] | None = None) -> None:
+async def _respond(response_url: str, text_: str, blocks: list[Block] | None = None) -> None:
     """Reply ephemerally via the response_url Slack hands us.
 
     No scope needed and only the invoker sees it, which is what a watchlist
@@ -511,7 +513,7 @@ async def _respond(response_url: str, text_: str, blocks: list[dict] | None = No
         return
     try:
         async with httpx.AsyncClient(timeout=settings().slack_timeout_s) as c:
-            body = {"response_type": "ephemeral", "text": text_}
+            body: dict[str, Any] = {"response_type": "ephemeral", "text": text_}
             if blocks:
                 body["blocks"] = blocks
             await c.post(response_url, json=body)

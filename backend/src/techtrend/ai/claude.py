@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import anthropic
 
@@ -53,13 +53,17 @@ def _is_haiku(model: str) -> bool:
     return "haiku" in model
 
 
-def _effort_kwargs(model: str, effort: str) -> dict[str, object]:
+def _effort_kwargs(model: str, effort: str) -> dict[str, Any]:
     """`output_config.effort` is a 400 on Haiku 4.5 and required on Opus 5.
 
     Opus 5 has extended thinking ON by default. Sending no effort setting does
     not disable it -- it just leaves it uncontrolled, which for a three-sentence
     rewrite means paying for reasoning tokens that change nothing.
     """
+    # `Any`, not `object`: this is splatted into the SDK's overloaded
+    # `create`/`parse`, and mypy cannot match a `dict[str, object]` against
+    # any overload -- it produced 47 of the 70 errors CI was failing on, one
+    # per candidate parameter, at every call site.
     return {} if _is_haiku(model) else {"output_config": {"effort": effort}}
 
 
@@ -184,7 +188,7 @@ class ClaudeClient:
         next run, because `summary_ts` is still NULL.
         """
         s = settings()
-        requests = [
+        requests: list[Any] = [
             {
                 "custom_id": f"story-{sid}",
                 "params": {

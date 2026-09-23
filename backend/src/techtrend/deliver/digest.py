@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, date, datetime, timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
 
 from techtrend.ai.client import client as ai_client
-from techtrend.deliver.slack import SlackClient, to_mrkdwn
+from techtrend.deliver.slack import Block, SlackClient, to_mrkdwn
 from techtrend.platform import queue, telemetry
 from techtrend.platform.config import settings
 from techtrend.platform.db import session_scope
@@ -77,7 +78,7 @@ def is_due(now: datetime | None = None) -> bool:
     return (now or datetime.now(UTC)).astimezone(tz()).hour >= s.digest_hour
 
 
-def render_headlines(rows: list) -> str:
+def render_headlines(rows: list[Any]) -> str:
     """The model's input: numbered headlines with reach and topic, nothing else.
 
     No bodies and no URLs -- a day of full text would cost more than the whole
@@ -97,7 +98,7 @@ def render_headlines(rows: list) -> str:
 _LINK = re.compile(r"\[([^\[\]\n]{1,120})\]\((\d{1,3})\)")
 
 
-async def linkify(body: str, rows: list, client: SlackClient, channel: str) -> str:
+async def linkify(body: str, rows: list[Any], client: SlackClient, channel: str) -> str:
     """Turn [phrase](n) into Slack's <url|phrase>, resolving n to a permalink.
 
     A reference the model invented, or one whose permalink Slack declines to
@@ -127,11 +128,11 @@ async def linkify(body: str, rows: list, client: SlackClient, channel: str) -> s
     return out
 
 
-def blocks_for(day: date, body: str, n: int, sites: int) -> tuple[str, list[dict]]:
+def blocks_for(day: date, body: str, n: int, sites: int) -> tuple[str, list[Block]]:
     """(fallback, blocks). Fallback is the push-notification line."""
     s = settings()
     heading = f"TechTrend Daily — {day.strftime('%A, %d %B %Y')}"
-    blocks: list[dict] = [
+    blocks: list[Block] = [
         {"type": "header", "text": {"type": "plain_text", "text": heading, "emoji": True}}
     ]
     # Slack rejects a section over 3000 chars, so paragraphs are packed into

@@ -253,18 +253,23 @@ def weekly_report_cmd(
         since, until = rep.week_window()
 
     async def _go() -> tuple[str, str | None]:
+        # The report reads the channel it reports ON, so it needs one even
+        # when it is not posting.
+        channel = s.slack_channel
+        if channel is None:
+            return "(no Slack channel configured)", None
         async with session_scope() as sess:
             body, rows, totals = await rep.build(
-                sess, s.slack_channel, since.astimezone(UTC), until.astimezone(UTC)
+                sess, channel, since.astimezone(UTC), until.astimezone(UTC)
             )
         if not body:
             return "(no stories carried in this window)", None
         if not post:
             return body, None
         client = SlackClient()
-        linked = await linkify(to_mrkdwn(body), rows, client, s.slack_channel)
+        linked = await linkify(to_mrkdwn(body), rows, client, channel)
         fallback, blocks = rep.blocks_for(until, linked, totals.n, totals.sites)
-        ts = await client.post(s.slack_channel, fallback, blocks=blocks, unfurl=False)
+        ts = await client.post(channel, fallback, blocks=blocks, unfurl=False)
         return body, ts
 
     body, ts = asyncio.run(_go())

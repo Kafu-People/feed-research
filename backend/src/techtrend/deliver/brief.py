@@ -16,12 +16,13 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from urllib.parse import urlsplit
 
 from sqlalchemy import text
 
 from techtrend.ai import gemini
-from techtrend.deliver.slack import SlackClient, decode_title, to_slack_report
+from techtrend.deliver.slack import Block, SlackClient, decode_title, to_slack_report
 from techtrend.platform import queue, telemetry
 from techtrend.platform.config import settings, site_blocked
 from techtrend.platform.db import session_scope
@@ -234,7 +235,7 @@ def _banned_source(src: gemini.Source) -> bool:
     return bool(site_blocked(host, banned) or site_blocked(src.title.strip(), banned))
 
 
-def _body_blocks(body: str) -> list[dict]:
+def _body_blocks(body: str) -> list[Block]:
     """Section blocks, split at the report's own headings.
 
     Chunking purely by length puts the break wherever 2,900 characters lands,
@@ -242,7 +243,7 @@ def _body_blocks(body: str) -> list[dict]:
     first means every visible break is one the report intended, and a divider
     between them turns a wall into a document.
     """
-    out: list[dict] = []
+    out: list[Block] = []
     for i, part in enumerate(_sections(body)):
         for j, piece in enumerate(_chunk(part, 2900)):
             # A divider before each new SECTION, never between the pieces of
@@ -328,7 +329,7 @@ def _repair_fences(parts: list[str]) -> list[str]:
     return out
 
 
-def _source_line(sources: list) -> str:
+def _source_line(sources: list[Any]) -> str:
     """One link per PUBLISHER, not one per citation.
 
     Grounding titles a source with its domain, and an answer built from forum
@@ -358,8 +359,8 @@ async def _post_both(
     title: str,
     label: str | None,
     brief: gemini.Brief,
-    sources: list,
-) -> list[dict]:
+    sources: list[Any],
+) -> list[Block]:
     """Two posts: the write-up, then the same findings as tables.
 
     Both, not one. They answer different questions -- understanding wants
@@ -369,7 +370,7 @@ async def _post_both(
     are usually what someone came for.
     """
     analysis, tables = brief.parts
-    posted: list[dict] = []
+    posted: list[Block] = []
     # Sources ride on the LAST post only: repeating a 17-link source line
     # twice says nothing the first one did not.
     halves = [(analysis, label), (tables, "tables")]
@@ -393,14 +394,14 @@ async def _post_both(
 
 
 def _render(
-    name: str, body: str, sources: list, searches: int, *, label: str | None = None
-) -> tuple[str, list[dict]]:
+    name: str, body: str, sources: list[Any], searches: int, *, label: str | None = None
+) -> tuple[str, list[Block]]:
     # Slack header blocks are plain_text and cap at 150 characters; a pasted
     # question can be longer than that and would be rejected outright.
     suffix = f" — {label}" if label else ""
     heading = name if len(name) > 40 else f"{name}{suffix}"
     heading = heading[:147] + "…" if len(heading) > 150 else heading
-    blocks: list[dict] = [
+    blocks: list[Block] = [
         {"type": "header", "text": {"type": "plain_text", "text": heading, "emoji": True}},
         *_body_blocks(to_slack_report(body)),
     ]

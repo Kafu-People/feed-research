@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from typing import Any
 
 import httpx
 
@@ -237,7 +238,7 @@ async def _ask(prompt: str, model: str) -> Brief:
     return _parse(r.json())
 
 
-def _parse(payload: dict) -> Brief:
+def _parse(payload: dict[str, Any]) -> Brief:
     """Pull the answer and its grounding out of a response.
 
     Defensive about shape: a blocked or empty candidate is a Brief with no

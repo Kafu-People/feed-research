@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from collections.abc import Sequence
 from typing import Any
 
 from sqlalchemy import text
@@ -130,7 +131,7 @@ async def handle_mention(
             telemetry.log.exception("qa.failed_to_report", thread_ts=thread_ts)
 
 
-async def _context(rows: list, *, budget: int) -> tuple[str, str]:
+async def _context(rows: Sequence[Any], *, budget: int) -> tuple[str, str]:
     """(title, body) for the model, whether the thread is one story or a report.
 
     One story keeps exactly the old shape -- cards mode must not change. A
