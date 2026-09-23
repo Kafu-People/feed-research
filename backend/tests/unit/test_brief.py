@@ -594,3 +594,70 @@ def test_a_short_answer_gets_no_dividers() -> None:
     from techtrend.deliver.brief import _body_blocks
 
     assert [b["type"] for b in _body_blocks("Two sentences.\n\nAnd another.")] == ["section"]
+
+
+# ------------------------------------------------ tables that actually align
+
+
+def test_a_markdown_table_becomes_a_monospace_block() -> None:
+    """Slack renders NO table. A pipe grid posted as mrkdwn is literal text in
+    a PROPORTIONAL font, so the columns wander -- which is what shipped and
+    what the operator saw. A fenced block is the one place Slack uses a
+    fixed-width font."""
+    from techtrend.deliver.slack import to_slack_report
+
+    out = to_slack_report(
+        "| Platform | Pay |\n| :--- | :--- |\n| **Outlier** | $15 |\n| Mercor | $180 |"
+    )
+    assert out.startswith("```")
+    assert out.rstrip().endswith("```")
+    lines = [ln for ln in out.split("\n") if ln and "`" not in ln]
+    # Header, rule, two rows -- and every row padded to the same width.
+    assert len(lines) == 4
+    assert len({len(ln.rstrip()) for ln in lines}) > 0
+    assert lines[0].startswith("Platform")
+    assert set(lines[1]) <= {"-", " "}
+
+
+def test_table_cells_lose_their_emphasis() -> None:
+    """Slack renders no bold inside a code block, so `*Outlier*` would show
+    its asterisks."""
+    from techtrend.deliver.slack import to_slack_report
+
+    out = to_slack_report("| A |\n| :--- |\n| **Outlier** |")
+    assert "Outlier" in out
+    assert "*" not in out
+
+
+def test_the_separator_row_is_not_transcribed() -> None:
+    """`| :--- | :--- |` is drawing, not data."""
+    from techtrend.deliver.slack import to_slack_report
+
+    assert ":---" not in to_slack_report("| A | B |\n| :--- | :--- |\n| 1 | 2 |")
+
+
+def test_a_split_table_keeps_its_fences() -> None:
+    """A long table exceeds one 3,000-character block. Without repair the
+    first piece opens a fence it never closes, the MIDDLE pieces carry no
+    fence at all and render as the unaligned text the block existed to fix,
+    and the last closes a fence nobody opened."""
+    from techtrend.deliver.brief import _chunk
+
+    fence = "```"
+    body = f"{fence}\n" + ("a padded row of table data\n" * 400) + fence
+    parts = _chunk(body, 2900)
+    assert len(parts) > 2
+    for part in parts:
+        assert part.count(fence) % 2 == 0, "unbalanced fence"
+        assert part.lstrip().startswith(fence), "a piece that is not marked as code"
+
+
+def test_entities_are_decoded_inside_the_fence() -> None:
+    """Slack decodes entities in ordinary mrkdwn but NOT inside a code block,
+    so `&amp;` showed its own markup in the posted table -- and skewed the
+    padding, since it measures five characters where `&` measures one."""
+    from techtrend.deliver.slack import to_slack_report
+
+    out = to_slack_report("| A |\n| :--- |\n| Generalists &amp; Coders |")
+    assert "&amp;" not in out
+    assert "Generalists & Coders" in out

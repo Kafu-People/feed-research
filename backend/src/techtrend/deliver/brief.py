@@ -293,8 +293,33 @@ def _chunk(body: str, limit: int) -> list[str]:
             cur = f"{cur}\n\n{para}" if cur else para
     if cur:
         parts.append(cur)
-    # 50 blocks a message, minus the header, context, divider and footer.
-    return parts[:44]
+    return _repair_fences(parts)[:44]
+
+
+def _repair_fences(parts: list[str]) -> list[str]:
+    """Re-open and re-close a code fence across a split, tracking state.
+
+    A comparison table can be longer than one 3,000-character block. Split it
+    and the first piece opens a fence it never closes, the MIDDLE pieces carry
+    no fence at all -- so they render as plain proportional text, which is the
+    unreadable thing the code block existed to fix -- and the last piece
+    closes a fence nobody opened.
+
+    Counting fences per piece is not enough, because a middle piece has an
+    even count of zero and still needs both ends. The state has to be carried.
+    """
+    out: list[str] = []
+    inside = False
+    for part in parts:
+        opened = inside
+        if opened:
+            part = "```\n" + part
+        # Every fence in the piece, including the one just prepended.
+        inside = part.count("```") % 2 == 1
+        if inside:
+            part = part + "\n```"
+        out.append(part)
+    return out
 
 
 def _source_line(sources: list) -> str:

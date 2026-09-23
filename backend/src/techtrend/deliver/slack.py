@@ -191,6 +191,74 @@ def to_mrkdwn(text: str) -> str:
     return text.strip()
 
 
+_TABLE_LINE = re.compile(r"^\s*\|.*\|\s*$")
+_TABLE_RULE = re.compile(r"^[\s|:\-]+$")
+
+
+def _cells(line: str) -> list[str]:
+    """Split one markdown table row. Leading and trailing pipes are borders,
+    not empty cells."""
+    inner = line.strip().strip("|")
+    return [c.strip() for c in inner.split("|")]
+
+
+def _fixed_width_table(rows: list[list[str]]) -> str:
+    """A markdown table as an aligned monospace block.
+
+    Slack renders NO table. A pipe grid posted as mrkdwn is literal text in a
+    proportional font, so the columns wander and the thing is unreadable --
+    which is exactly what shipped. A fenced code block is the one place Slack
+    uses a fixed-width font, so padded columns actually line up there.
+
+    Emphasis is stripped from the cells: inside a code block Slack renders no
+    bold, so `*Outlier*` would show its asterisks.
+    """
+    width = len(max(rows, key=len))
+    grid = [r + [""] * (width - len(r)) for r in rows]
+    # `html.unescape` matters INSIDE the fence specifically: Slack decodes
+    # entities in ordinary mrkdwn but not in a code block, so `&amp;` shows
+    # its own markup there. It also skews the padding, since `&amp;` measures
+    # five characters where `&` measures one.
+    clean = [
+        [html.unescape(_MD_BOLD.sub(r"\1", c)).replace("*", "").replace("`", "") for c in r]
+        for r in grid
+    ]
+    # Cap a column so one long cell cannot push every other column off screen.
+    caps = [min(24, max(len(r[i]) for r in clean)) for i in range(width)]
+    out = []
+    for n, row in enumerate(clean):
+        cells = [
+            (c if len(c) <= caps[i] else c[: caps[i] - 1] + "\u2026").ljust(caps[i])
+            for i, c in enumerate(row)
+        ]
+        out.append("  ".join(cells).rstrip())
+        if n == 0:  # a rule under the header, drawn rather than transcribed
+            out.append("  ".join("-" * w for w in caps))
+    return "```\n" + "\n".join(out) + "\n```"
+
+
+def _tables_to_blocks(text: str) -> str:
+    """Rewrite every markdown table in `text` as a monospace block."""
+    out: list[str] = []
+    rows: list[list[str]] = []
+
+    def flush() -> None:
+        if rows:
+            out.append(_fixed_width_table(rows))
+            rows.clear()
+
+    for line in text.split("\n"):
+        if _TABLE_LINE.match(line):
+            # `| :--- | :--- |` is drawing, not data.
+            if not _TABLE_RULE.match(line):
+                rows.append(_cells(line))
+            continue
+        flush()
+        out.append(line)
+    flush()
+    return "\n".join(out)
+
+
 def to_slack_report(text: str) -> str:
     """Model markdown -> Slack mrkdwn, KEEPING the structure.
 
@@ -221,10 +289,9 @@ def to_slack_report(text: str) -> str:
     # `- item`, `* item`, `+ item` -> `• item`, indentation preserved so a
     # nested list still reads as nested.
     text = re.sub(r"^(\s{0,8})[-*+][ \t]+", r"\1• ", text, flags=re.M)
-    # Markdown tables survive as-is: Slack renders no table, but a pipe-and-
-    # dash grid in a chat message is still readable, and the alternative is
-    # discarding the column headings the prompt asked for.
-    return text.strip()
+    # Tables LAST: the cell contents have had their emphasis normalised by
+    # now, and the code block that follows must not have Slack markup inside.
+    return _tables_to_blocks(text).strip()
 
 
 def _trunc(s: str, n: int) -> str:
