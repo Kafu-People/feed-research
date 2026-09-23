@@ -661,3 +661,24 @@ def test_entities_are_decoded_inside_the_fence() -> None:
     out = to_slack_report("| A |\n| :--- |\n| Generalists &amp; Coders |")
     assert "&amp;" not in out
     assert "Generalists & Coders" in out
+
+
+def test_the_prompt_asks_part_one_for_prose_and_part_two_for_tables() -> None:
+    """Two readings, two shapes, and the operator settled both.
+
+    Part one was briefly written as headings and bullets. That chops an
+    explanation into fragments and leaves the reader to reassemble it -- so
+    part one is prose that connects its facts, and every list lives in part
+    two as a table.
+    """
+    from techtrend.ai.gemini import _STYLE
+
+    part_one = _STYLE[_STYLE.index("PART ONE") : _STYLE.index("PART TWO")]
+    assert "NO bullet points" in part_one
+    assert "NO numbered lists" in part_one
+    assert "NO headings" in part_one
+    assert "Flowing paragraphs" in part_one
+
+    part_two = _STYLE[_STYLE.index("PART TWO") :]
+    assert "tables" in part_two
+    assert "Four or\nfive columns at most" in part_two

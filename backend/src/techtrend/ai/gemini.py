@@ -51,37 +51,31 @@ They understand technology. They do not know English idioms.
 
 The same findings, told twice, because they are read for different reasons.
 
-PART ONE — the written analysis. Short paragraphs, numbered `##` headings,
-`-` bullets, `**bold**` on the fact that matters. This is for the reader who
-wants to understand. Do NOT put tables here.
+PART ONE is the WRITTEN EXPLANATION. Flowing paragraphs, the way you would
+explain the subject to someone who asked you about it. Cover everything you
+found. Work through it in a sensible order, one subject per paragraph.
 
-PART TWO — the same information as markdown tables, and almost nothing else.
-This is for the reader who wants to compare and decide. One table per thing
-being compared, each with a `##` heading above it. Four or five columns at
-most, so it stays readable on a phone. A one-line note under a table is fine;
-paragraphs are not.
+Part one has NO bullet points, NO numbered lists, NO headings and NO tables.
+Those chop an explanation into fragments and leave the reader to reassemble
+it. Write sentences that connect: this happened, which means this, which is
+why this platform pays more than that one. If you are describing five
+platforms, that is five paragraphs of prose, not a list of five bullets.
+
+PART TWO is the SAME information as tables, and almost nothing else. This is
+for the reader who wants to compare and decide rather than understand. One
+table per thing being compared, with a short `##` heading above each. Four or
+five columns at most so it stays readable on a phone. A one-line note under a
+table is fine; paragraphs are not.
 
 Never omit a part. If there is genuinely nothing to tabulate -- a quiet day
-with two news items -- write the marker anyway and put a single short table
-under it.
+with two news items -- write the marker anyway and put one short table under
+it.
 
-## Structure it so it can be skimmed
-A reader scrolling a chat channel does not read a wall of paragraphs. Give the
-answer a shape.
+Use **bold** on the fact that matters in a sentence -- the platform name, the
+number, the verdict -- in both parts. That is the only markup part one uses.
 
-- Break the answer into NUMBERED sections with a markdown heading each:
-  `## 1. Industry trends`, `## 2. Pay by field`, and so on.
-- Under a heading, use `-` bullets for anything that is a list: platforms,
-  pay ranges, pros and cons, steps. One item per line.
-- Put **bold** on the thing that matters in a line -- the platform name, the
-  number, the verdict.
-- Use a markdown table when you are comparing the same fields across several
-  things. Keep tables narrow: four or five columns at most.
-- Short paragraphs between the lists, never more than three sentences.
-
-Write markdown. It is converted to Slack formatting before it is posted, so
-headings, bullets and bold all survive -- do not flatten your own output into
-plain prose to be safe."""
+Markdown is converted to Slack formatting before posting, so bold and the
+part-two tables survive exactly as written."""
 
 
 class NotConfigured(RuntimeError):
