@@ -14,7 +14,7 @@ the model's own words before anything is posted.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 
 from sqlalchemy import text
@@ -26,14 +26,62 @@ from techtrend.platform.config import settings, site_blocked
 from techtrend.platform.db import session_scope
 from techtrend.topic.match import blocked, searchable
 
-_DUE = text("""
-    SELECT name, prompt FROM brief_topics
-     WHERE active
-       AND (last_run_at IS NULL OR last_run_at < :since)
-     ORDER BY last_run_at NULLS FIRST, name
-""")
+# The same topic, asked three different questions. The window is what makes a
+# daily post news instead of yesterday's overview reprinted -- which is what a
+# 17,542-character report becomes when you run it again tomorrow.
+CADENCES: dict[str, dict[str, str]] = {
+    "daily": {
+        "column": "last_run_at",
+        "label": "today",
+        "window": (
+            "Report ONLY what is NEW or CHANGED in the last 24 hours. Do not "
+            "restate background a regular reader already knows. If little "
+            "happened, say that in one or two sentences rather than padding "
+            "with old material. Lead with the newest thing and give its date."
+        ),
+    },
+    "weekly": {
+        "column": "last_weekly_at",
+        "label": "this week",
+        "window": (
+            "Cover the last 7 days. What changed, what is new, what moved, and "
+            "what it adds up to. Group related items rather than listing them "
+            "one by one. Give the date of each item."
+        ),
+    },
+    "monthly": {
+        "column": "last_monthly_at",
+        "label": "the full picture",
+        "window": (
+            "Give the complete current overview, the state of things as they "
+            "stand now. This is the reference version, so answer the whole "
+            "question rather than only what is recent."
+        ),
+    },
+}
+
 _ONE = text("SELECT name, prompt FROM brief_topics WHERE name = :name AND active")
-_MARK = text("UPDATE brief_topics SET last_run_at = now() WHERE name = :name")
+
+
+# Built ONCE, from CADENCES, at import. The column name cannot be a bound
+# parameter, so the alternative is formatting a string per call -- which reads
+# as SQL injection to any reader and to the linter, even though the only
+# possible input is a key of a module constant. Building them here makes the
+# closed set obvious and leaves no string formatting on the hot path.
+_DUE_SQL = {
+    name: text(
+        f"SELECT name, prompt FROM brief_topics"  # noqa: S608 - column from CADENCES
+        f" WHERE active AND ({c['column']} IS NULL OR {c['column']} < :since)"
+        f" ORDER BY {c['column']} NULLS FIRST, name"
+    )
+    for name, c in CADENCES.items()
+}
+_MARK_SQL = {
+    name: text(
+        f"UPDATE brief_topics SET {c['column']} = now() WHERE name = :name"  # noqa: S608
+    )
+    for name, c in CADENCES.items()
+}
 
 
 def configured() -> bool:
@@ -54,16 +102,19 @@ async def run(job: queue.Job) -> None:
         await _one(SlackClient(), "question", str(ask), heading=str(ask))
         return
 
+    cadence = str(job.payload.get("cadence") or "daily")
+    if cadence not in CADENCES:
+        cadence = "daily"
+
     if name := job.payload.get("name"):
         async with session_scope() as sess:
             rows = list((await sess.execute(_ONE, {"name": str(name)})).all())
     else:
-        # Anything not researched since the start of today's local day.
-        from techtrend.deliver.digest import local_day, tz
-
-        since = datetime.combine(local_day(), datetime.min.time(), tzinfo=tz()).astimezone(UTC)
+        # Anything whose stamp for THIS cadence is older than its period. A
+        # topic can be due weekly and not due daily on the same morning.
+        since = datetime.now(UTC) - _period(cadence)
         async with session_scope() as sess:
-            rows = list((await sess.execute(_DUE, {"since": since})).all())
+            rows = list((await sess.execute(_DUE_SQL[cadence], {"since": since})).all())
     if not rows:
         return
 
@@ -77,11 +128,31 @@ async def run(job: queue.Job) -> None:
         if spent >= s.brief_max_per_day:
             telemetry.log.warning("brief.budget_reached", spent=spent, skipped=row.name)
             break
-        spent += await _one(client, row.name, row.prompt)
-    telemetry.log.info("brief.run_done", topics=len(rows), searches=spent)
+        spent += await _one(client, row.name, row.prompt, cadence=cadence)
+    telemetry.log.info("brief.run_done", cadence=cadence, topics=len(rows), searches=spent)
 
 
-async def _one(client: SlackClient, name: str, prompt: str, *, heading: str | None = None) -> int:
+def _period(cadence: str) -> timedelta:
+    """How stale a stamp must be before that cadence is due again.
+
+    Slightly under the nominal period on purpose: a job that fired at 08:00:03
+    yesterday must not be judged "not due yet" at 08:00:01 today.
+    """
+    return {
+        "daily": timedelta(hours=20),
+        "weekly": timedelta(days=6),
+        "monthly": timedelta(days=27),
+    }[cadence]
+
+
+async def _one(
+    client: SlackClient,
+    name: str,
+    prompt: str,
+    *,
+    heading: str | None = None,
+    cadence: str = "daily",
+) -> int:
     """Research one topic and post it. Returns searches spent.
 
     A failure is this topic's failure: the next one still runs, and the
@@ -89,8 +160,11 @@ async def _one(client: SlackClient, name: str, prompt: str, *, heading: str | No
     than silently dropping the beat.
     """
     s = settings()
+    # The window goes AFTER the topic's own words, so it is the last thing the
+    # model reads and cannot be buried by a long spec like the research one.
+    asked = prompt if heading else f"{prompt}\n\n{CADENCES[cadence]['window']}"
     try:
-        brief = await gemini.research(prompt)
+        brief = await gemini.research(asked)
     except gemini.QuotaExceeded:
         # Not retryable and not a rate limit -- it is what a project without
         # billing returns for every grounded call. Hammering it would change
@@ -115,13 +189,19 @@ async def _one(client: SlackClient, name: str, prompt: str, *, heading: str | No
     sources = [src for src in brief.sources if not _banned_source(src)]
     channel = s.slack_brief_channel
     assert channel is not None  # noqa: S101 - narrowed by configured()
-    fallback, blocks = _render(heading or name, brief.text, sources, brief.searches)
+    fallback, blocks = _render(
+        heading or name,
+        brief.text,
+        sources,
+        brief.searches,
+        label=None if heading else CADENCES[cadence]["label"],
+    )
     # unfurl off: a source list of a dozen links would bury the brief itself.
     await client.post(channel, fallback, blocks=blocks, unfurl=False)
 
     if heading is None:
         async with session_scope() as sess:
-            await sess.execute(_MARK, {"name": name})
+            await sess.execute(_MARK_SQL[cadence], {"name": name})
     telemetry.log.info(
         "brief.posted",
         name=name,
@@ -197,10 +277,13 @@ def _source_line(sources: list) -> str:
     return " · ".join(parts)
 
 
-def _render(name: str, body: str, sources: list, searches: int) -> tuple[str, list[dict]]:
+def _render(
+    name: str, body: str, sources: list, searches: int, *, label: str | None = None
+) -> tuple[str, list[dict]]:
     # Slack header blocks are plain_text and cap at 150 characters; a pasted
     # question can be longer than that and would be rejected outright.
-    heading = name if len(name) > 40 else f"Brief — {name}"
+    suffix = f" — {label}" if label else ""
+    heading = name if len(name) > 40 else f"{name}{suffix}"
     heading = heading[:147] + "…" if len(heading) > 150 else heading
     blocks: list[dict] = [
         {"type": "header", "text": {"type": "plain_text", "text": heading, "emoji": True}},

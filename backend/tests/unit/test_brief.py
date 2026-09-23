@@ -359,3 +359,72 @@ def test_a_long_prompt_echo_cannot_break_the_reply() -> None:
 
     assert len(_short("y" * 5000)) <= 900
     assert _short("short one") == "short one"
+
+
+# ------------------------------------------ one topic, three rhythms
+
+
+def test_each_cadence_reads_and_writes_its_own_stamp() -> None:
+    """ "Did we do the weekly one yet" cannot be answered by a single
+    `last_run_at`, which is why there are three columns."""
+    from techtrend.deliver.brief import _DUE_SQL, _MARK_SQL, CADENCES
+
+    assert set(CADENCES) == {"daily", "weekly", "monthly"}
+    cols = {c["column"] for c in CADENCES.values()}
+    assert cols == {"last_run_at", "last_weekly_at", "last_monthly_at"}
+    for name, c in CADENCES.items():
+        assert c["column"] in str(_DUE_SQL[name])
+        assert c["column"] in str(_MARK_SQL[name])
+
+
+def test_due_periods_are_under_the_nominal_window() -> None:
+    """A job that fired at 08:00:03 yesterday must not read as "not due yet"
+    at 08:00:01 today."""
+    from datetime import timedelta
+
+    from techtrend.deliver.brief import _period
+
+    assert _period("daily") < timedelta(days=1)
+    assert _period("weekly") < timedelta(days=7)
+    assert _period("monthly") < timedelta(days=30)
+
+
+def test_the_window_is_what_makes_a_daily_post_news() -> None:
+    """The same topic asked daily must ask for what CHANGED, or it reprints
+    yesterday's overview -- measured at 17,542 characters, identical."""
+    from techtrend.deliver.brief import CADENCES
+
+    assert "last 24 hours" in CADENCES["daily"]["window"]
+    assert "NEW" in CADENCES["daily"]["window"]
+    assert "7 days" in CADENCES["weekly"]["window"]
+    assert "complete current overview" in CADENCES["monthly"]["window"]
+
+
+def test_the_header_says_which_rhythm_it_is() -> None:
+    from techtrend.deliver.brief import _render
+
+    for cadence, expect in [("daily", "today"), ("weekly", "this week")]:
+        _, blocks = _render("aigigwork", "body", [], 1, label=expect)
+        assert expect in blocks[0]["text"]["text"], cadence
+
+
+@pytest.mark.asyncio
+async def test_a_one_off_question_gets_no_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A question is already specific. Appending "only the last 24 hours" to
+    it would silently rewrite what the person asked."""
+    from techtrend.platform.config import settings
+
+    seen: dict[str, str] = {}
+
+    async def fake_research(prompt: str) -> Brief:
+        seen["prompt"] = prompt
+        return Brief(text="An answer.", sources=[], queries=["q"])
+
+    settings.cache_clear()
+    spy = _wire(monkeypatch, "unused")
+    monkeypatch.setattr(brief_mod.gemini, "research", fake_research)
+    try:
+        await brief_mod._one(spy, "question", "Is Mercor still paying?", heading="Is Mercor...")
+    finally:
+        settings.cache_clear()
+    assert seen["prompt"] == "Is Mercor still paying?"

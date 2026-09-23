@@ -476,7 +476,33 @@ async def _sweep_brief() -> None:
     # key plus `last_run_at` are what stop it filing twice.
     if not configured() or datetime.now(UTC).astimezone(tz()).hour < settings().brief_hour:
         return
-    await queue.enqueue("brief", f"brief:{local_day().isoformat()}", priority=PRIORITY_BACKFILL)
+
+    day = local_day()
+    # Daily every morning. Weekly on Monday, monthly on the 1st -- so a Monday
+    # the 1st files all three, and each is a separate job with its own key,
+    # its own window and its own stamp. The stage skips a topic whose stamp
+    # for THAT cadence is still fresh, so a doubled-up morning costs nothing
+    # extra the next day.
+    await queue.enqueue(
+        "brief",
+        f"brief:daily:{day.isoformat()}",
+        {"cadence": "daily"},
+        priority=PRIORITY_BACKFILL,
+    )
+    if day.weekday() == 0:
+        await queue.enqueue(
+            "brief",
+            f"brief:weekly:{day.isocalendar().week}:{day.year}",
+            {"cadence": "weekly"},
+            priority=PRIORITY_BACKFILL,
+        )
+    if day.day == 1:
+        await queue.enqueue(
+            "brief",
+            f"brief:monthly:{day.year}-{day.month:02d}",
+            {"cadence": "monthly"},
+            priority=PRIORITY_BACKFILL,
+        )
 
 
 async def _sweep_hourly() -> None:
