@@ -15,19 +15,6 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 2s
           --health-timeout 3s --health-retries 30
-      # The read stage writes article bodies to object storage, so three of
-      # its tests need a bucket. Without this they failed on
-      # NoCredentialsError: with no endpoint configured, boto3 falls back to
-      # the default credential chain, and a CI runner has no credentials.
-      #
-      # bitnami/minio rather than minio/minio: a GitHub service container
-      # cannot override CMD, and the official image needs `server /data`.
-      blobs:
-        image: bitnami/minio:latest
-        env:
-          MINIO_ROOT_USER: dev
-          MINIO_ROOT_PASSWORD: devdevdev
-        ports: ["9000:9000"]
     env:
       TT_DATABASE_URL: postgresql+asyncpg://postgres:dev@localhost:5432/techtrend
       TT_JWT_SECRET: ci-secret
@@ -44,16 +31,28 @@ jobs:
       - run: uv run mypy src
       - run: uv run lint-imports          # layer violations fail the build
       - run: uv run alembic upgrade head
-      # Waited for from the RUNNER, not by a service health-cmd: the health
-      # check runs inside the image, and whether that image ships curl is not
-      # something this workflow should depend on.
-      - name: Wait for MinIO
+      # The read stage writes article bodies to object storage, so three of
+      # its tests need a bucket. Without one they fail on NoCredentialsError:
+      # with no endpoint configured, boto3 falls back to its default
+      # credential chain, and a runner has no credentials to find.
+      #
+      # `docker run`, not a service container: the official image needs the
+      # command `server /data`, and a service container cannot set one. The
+      # first attempt used bitnami/minio to dodge that, and its `latest` tag
+      # no longer exists. Same image as docker-compose uses locally.
+      - name: Start MinIO
         run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=dev -e MINIO_ROOT_PASSWORD=devdevdev \
+            minio/minio server /data
           for i in $(seq 1 40); do
-            curl -fsS http://localhost:9000/minio/health/live && exit 0
+            if curl -fsS http://localhost:9000/minio/health/live; then
+              echo "MinIO ready"; exit 0
+            fi
             sleep 2
           done
           echo "MinIO did not come up" >&2
+          docker logs minio >&2
           exit 1
       - run: uv run pytest tests -q
 
