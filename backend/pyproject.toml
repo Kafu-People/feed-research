@@ -79,7 +79,19 @@ mypy_path = "src"
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["boto3.*", "botocore.*", "pgvector.*", "feedparser.*", "defusedxml.*", "trafilatura.*"]
+# `fastembed` is a LAZY import inside `read/embed.py` and is not a declared
+# dependency -- the embedder is swappable and CI never runs it. It belongs in
+# this list for the same reason the rest are here: the code is typed, the
+# third-party stubs are not there to check it against.
+module = [
+    "boto3.*",
+    "botocore.*",
+    "pgvector.*",
+    "feedparser.*",
+    "defusedxml.*",
+    "trafilatura.*",
+    "fastembed.*",
+]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
