@@ -282,6 +282,12 @@ class Settings(BaseSettings):
     # gemini-2.5-* returns 404 for new projects as of 2026-09-22; Google's own
     # error names these as the replacements.
     gemini_model: str = "gemini-3.6-flash"
+    # Tried when the primary answers 503. Google's flash models go busy in
+    # spikes -- two consecutive runs hit "This model is currently
+    # experiencing high demand" -- and a brief that skips a day because of
+    # one busy afternoon is a worse outcome than a brief from the smaller
+    # model. Empty disables the fallback.
+    gemini_fallback_model: str = "gemini-3.5-flash-lite"
     gemini_timeout_s: float = 180.0
     # Where briefs go. Deliberately NOT slack_channel: a research brief is a
     # different thing from the hourly report and should not compete with it.

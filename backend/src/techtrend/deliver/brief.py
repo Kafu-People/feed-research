@@ -166,6 +166,12 @@ async def _one(
     asked = prompt if heading else f"{prompt}\n\n{CADENCES[cadence]['window']}"
     try:
         brief = await gemini.research(asked)
+    except gemini.Transient:
+        # Not this topic's fault and not today's answer lost: let the queue
+        # retry with its own backoff. A 503 during one afternoon used to cost
+        # the topic its entire day, because every failure meant "skip".
+        telemetry.log.warning("brief.transient", name=name)
+        raise
     except gemini.QuotaExceeded:
         # Not retryable and not a rate limit -- it is what a project without
         # billing returns for every grounded call. Hammering it would change

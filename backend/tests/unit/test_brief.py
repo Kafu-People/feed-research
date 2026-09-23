@@ -711,3 +711,63 @@ def test_wrapped_rows_stay_aligned() -> None:
     assert set(rule) <= {"-", " "}
     # The second column starts at the same offset on the header and the rule.
     assert body[0].index("B") == rule.index(" ") + 2
+
+
+# ------------------------------------------- busy is not broken
+
+
+@pytest.mark.asyncio
+async def test_a_busy_model_falls_back_to_the_smaller_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Google's flash models go unavailable in spikes -- two consecutive runs
+    hit "This model is currently experiencing high demand". An answer from
+    the smaller model beats no answer today."""
+    from techtrend.ai import gemini
+
+    tried: list[str] = []
+
+    async def fake_ask(prompt: str, model: str) -> Brief:
+        tried.append(model)
+        if len(tried) == 1:
+            raise gemini.Transient("gemini 503")
+        return Brief(text="answered by the fallback")
+
+    class _S:
+        gemini_model = "primary"
+        gemini_fallback_model = "secondary"
+
+    monkeypatch.setattr(gemini, "_ask", fake_ask)
+    monkeypatch.setattr(gemini, "settings", lambda: _S())
+    out = await gemini.research("q")
+    assert tried == ["primary", "secondary"]
+    assert out.text == "answered by the fallback"
+
+
+@pytest.mark.asyncio
+async def test_no_fallback_configured_means_the_error_stands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from techtrend.ai import gemini
+
+    async def always_busy(prompt: str, model: str) -> Brief:
+        raise gemini.Transient("gemini 503")
+
+    class _S:
+        gemini_model = "primary"
+        gemini_fallback_model = ""
+
+    monkeypatch.setattr(gemini, "_ask", always_busy)
+    monkeypatch.setattr(gemini, "settings", lambda: _S())
+    with pytest.raises(gemini.Transient):
+        await gemini.research("q")
+
+
+def test_transient_is_not_quota() -> None:
+    """A quota error means billing is off and retrying changes nothing; a
+    transient means try again shortly. Without the split, one busy afternoon
+    cost a topic its entire day."""
+    from techtrend.ai.gemini import QuotaExceeded, Transient
+
+    assert not issubclass(Transient, QuotaExceeded)
+    assert not issubclass(QuotaExceeded, Transient)

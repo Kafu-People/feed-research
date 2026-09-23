@@ -123,6 +123,9 @@ async def run(job: queue.Job) -> None:
     prompt = f"{_ASK}\n\n<thread>\n{transcript}\n</thread>\n\n<question>\n{question}\n</question>"
     try:
         answer = await gemini.research(prompt)
+    except gemini.Transient:
+        telemetry.log.warning("discuss.transient", thread_ts=thread_ts)
+        raise  # the queue retries; the note stays until it resolves
     except gemini.QuotaExceeded:
         telemetry.log.error("discuss.quota")
         raise

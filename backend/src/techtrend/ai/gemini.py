@@ -82,6 +82,16 @@ class NotConfigured(RuntimeError):
     """No API key. The brief stage is inert rather than broken."""
 
 
+class Transient(RuntimeError):
+    """A 5xx or a timeout -- Google is busy, not refusing.
+
+    Distinct from QuotaExceeded on purpose. A quota error means billing is off
+    and retrying changes nothing; this means try again shortly. Without the
+    split, a 503 during one afternoon cost a topic its whole day, because the
+    caller treated every failure as "skip until tomorrow".
+    """
+
+
 class QuotaExceeded(RuntimeError):
     """HTTP 429.
 
@@ -126,7 +136,23 @@ class Brief:
 
 
 async def research(prompt: str) -> Brief:
-    """One grounded question in, one answer plus its sources out."""
+    """One grounded question in, one answer plus its sources out.
+
+    Falls back to a second model when the first is busy. Google's flash
+    models go unavailable in spikes, and an answer from the smaller model
+    beats no answer today.
+    """
+    s = settings()
+    try:
+        return await _ask(prompt, s.gemini_model)
+    except Transient:
+        if not s.gemini_fallback_model or s.gemini_fallback_model == s.gemini_model:
+            raise
+        log.warning("gemini.falling_back", frm=s.gemini_model, to=s.gemini_fallback_model)
+        return await _ask(prompt, s.gemini_fallback_model)
+
+
+async def _ask(prompt: str, model: str) -> Brief:
     s = settings()
     if s.gemini_api_key is None:
         raise NotConfigured("GEMINI_API_KEY is not set")
@@ -139,18 +165,25 @@ async def research(prompt: str) -> Brief:
         # worse than no answer -- it is a confident one about last year.
         "tools": [{"google_search": {}}],
     }
-    url = _ENDPOINT.format(model=s.gemini_model)
+    url = _ENDPOINT.format(model=model)
     async with httpx.AsyncClient(timeout=s.gemini_timeout_s) as c:
-        r = await c.post(
-            url,
-            headers={
-                "x-goog-api-key": s.gemini_api_key.get_secret_value(),
-                "Content-Type": "application/json",
-            },
-            content=json.dumps(body),
-        )
+        try:
+            r = await c.post(
+                url,
+                headers={
+                    "x-goog-api-key": s.gemini_api_key.get_secret_value(),
+                    "Content-Type": "application/json",
+                },
+                content=json.dumps(body),
+            )
+        except httpx.HTTPError as e:
+            # A timeout on a two-minute grounded search is Google being slow,
+            # not the request being wrong.
+            raise Transient(f"gemini unreachable: {e!r}") from e
     if r.status_code == 429:
         raise QuotaExceeded(r.text[:300])
+    if r.status_code >= 500:
+        raise Transient(f"gemini {r.status_code}: {r.text[:200]}")
     r.raise_for_status()
     return _parse(r.json())
 
