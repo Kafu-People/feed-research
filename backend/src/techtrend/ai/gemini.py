@@ -152,6 +152,55 @@ async def research(prompt: str) -> Brief:
         return await _ask(prompt, s.gemini_fallback_model)
 
 
+async def write(system: str, user: str, *, model: str | None = None) -> tuple[str, int, int]:
+    """Plain generation, NO search grounding. Returns (text, in_tokens, out).
+
+    The other half of this module. `research` asks Google a question and is
+    billed per search; this one just writes, and is billed per token -- which
+    is the right shape for summarising an article the crawler already stored.
+    Grounding there would be worse as well as dearer: the summary must
+    describe THAT article, not the web's opinion of its subject.
+    """
+    s = settings()
+    if s.gemini_api_key is None:
+        raise NotConfigured("GEMINI_API_KEY is not set")
+    body = {
+        "contents": [{"parts": [{"text": user}]}],
+        "systemInstruction": {"parts": [{"text": system}]},
+    }
+    url = _ENDPOINT.format(model=model or s.gemini_model)
+    async with httpx.AsyncClient(timeout=s.gemini_timeout_s) as c:
+        try:
+            r = await c.post(
+                url,
+                headers={
+                    "x-goog-api-key": s.gemini_api_key.get_secret_value(),
+                    "Content-Type": "application/json",
+                },
+                content=json.dumps(body),
+            )
+        except httpx.HTTPError as e:
+            raise Transient(f"gemini unreachable: {e!r}") from e
+    if r.status_code == 429:
+        raise QuotaExceeded(r.text[:300])
+    if r.status_code >= 500:
+        raise Transient(f"gemini {r.status_code}: {r.text[:200]}")
+    r.raise_for_status()
+    payload = r.json()
+    cands = payload.get("candidates") or []
+    if not cands:
+        log.warning("gemini.no_candidate", feedback=payload.get("promptFeedback"))
+        return "", 0, 0
+    parts = (cands[0].get("content") or {}).get("parts") or []
+    text_out = "".join(p.get("text", "") for p in parts).strip()
+    usage = payload.get("usageMetadata") or {}
+    return (
+        text_out,
+        int(usage.get("promptTokenCount", 0)),
+        int(usage.get("candidatesTokenCount", 0)),
+    )
+
+
 async def _ask(prompt: str, model: str) -> Brief:
     s = settings()
     if s.gemini_api_key is None:

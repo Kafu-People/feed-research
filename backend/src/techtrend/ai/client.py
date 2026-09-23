@@ -33,6 +33,11 @@ def client() -> AIClient:
     s = settings()
     if s.ai_fake:
         return FakeAIClient()
+    if s.ai_writer == "gemini":
+        # Writes with Gemini, delegates judge/distill to Claude.
+        from techtrend.ai.gemini_client import GeminiClient
+
+        return GeminiClient()
     from techtrend.ai.claude import ClaudeClient  # imported lazily: optional dep
 
     return ClaudeClient()

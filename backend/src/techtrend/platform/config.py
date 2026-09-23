@@ -243,6 +243,26 @@ class Settings(BaseSettings):
     # under it when the batch returns (minutes, not hours, at this size).
     # False restores the inline call, which is what the notify stage does when
     # it sees this off.
+    # Which vendor writes the channel's prose -- summaries, the digest, the
+    # weekly roundup, Q&A answers. "gemini" by operator decision 2026-09-23:
+    # the research briefs read better than the Haiku summaries, both run the
+    # same house style, so the difference is the model. Judging and distilling
+    # stay on Claude either way; they return typed objects.
+    ai_writer: Literal["anthropic", "gemini"] = "anthropic"
+    # Parallel Gemini writes. There is no batch endpoint, so a quiet hour's
+    # summaries go out concurrently instead.
+    gemini_concurrency: int = 4
+    # The model that WRITES, separate from the one that researches. Measured
+    # 2026-09-23 on the same live article, same prompt:
+    #
+    #   gemini-3.6-flash       $0.00187/summary   $1.52/month at 27/day
+    #   gemini-3.5-flash-lite  $0.00081/summary   $0.65/month
+    #   haiku-4.5, batched     $0.00090/summary   $0.74/month  (what it replaces)
+    #
+    # Flash-Lite is cheaper than the Haiku batch it replaces AND reads the
+    # same -- and 3.6-flash doubles in price on 2027-01-01, which Flash-Lite
+    # does not. Research keeps `gemini_model`, where depth is worth paying for.
+    gemini_write_model: str = "gemini-3.5-flash-lite"
     ai_summary_batch: bool = True
     # How the channel is written to.
     #
@@ -434,7 +454,12 @@ class Settings(BaseSettings):
                     f"{field}={model!r}: Opus is banned on this project. "
                     "Every stage runs on Haiku (see ai_summary_model)."
                 )
-        if "haiku" not in self.ai_summary_model.lower():
+        # The Haiku-only rule is about which ANTHROPIC model may summarise. It
+        # was never a rule about vendors -- the operator switched the writer
+        # to Gemini on 2026-09-23 -- so it applies when Claude is the writer
+        # and says nothing when it is not. The Opus ban above is unconditional
+        # and stays that way.
+        if self.ai_writer == "anthropic" and "haiku" not in self.ai_summary_model.lower():
             raise ValueError(
                 f"ai_summary_model={self.ai_summary_model!r}: summaries are Haiku only."
             )

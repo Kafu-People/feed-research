@@ -221,7 +221,21 @@ def test_the_ban_is_on_the_family_not_one_model_id() -> None:
 def test_summaries_refuse_anything_that_is_not_haiku() -> None:
     """Sonnet is not Opus, and is still not allowed to write summaries."""
     with pytest.raises(Exception):  # noqa: B017 - pydantic ValidationError
-        Settings(ai_summary_model="claude-sonnet-5")
+        Settings(ai_summary_model="claude-sonnet-5", ai_writer="anthropic")
+
+
+def test_the_haiku_rule_is_about_claude_not_about_vendors() -> None:
+    """It says which ANTHROPIC model may summarise. With Gemini writing, the
+    Claude summary model is unused, and enforcing it would refuse to boot over
+    a setting nothing reads."""
+    assert Settings(ai_writer="gemini", ai_summary_model="claude-sonnet-5").ai_writer == "gemini"
+
+
+def test_the_opus_ban_survives_the_vendor_switch() -> None:
+    """The Opus ban was never conditional and must not become so by accident."""
+    for writer in ("anthropic", "gemini"):
+        with pytest.raises(Exception):  # noqa: B017 - pydantic ValidationError
+            Settings(ai_writer=writer, ai_model="claude-opus-5")
 
 
 def test_every_ai_model_field_is_covered_by_the_guard() -> None:
