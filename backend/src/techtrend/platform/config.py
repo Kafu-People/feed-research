@@ -304,6 +304,10 @@ class Settings(BaseSettings):
     # fits the operator's 200 BRL budget with room, and is the number to check
     # against real billing after the first week.
     brief_max_per_day: int = 40
+    # `/techtrend question` is the one entry point a person can fire by hand,
+    # repeatedly, and each one costs 4 to 8 billed searches. The daily cap
+    # above governs the scheduled run; this governs people.
+    brief_questions_per_day: int = 10
     # How long the summarise job waits on its own batch before handing the
     # batch id to a follow-up job. Well inside `job_lease_minutes` (15) so the
     # lease cannot expire under a poll that is still running.

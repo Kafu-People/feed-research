@@ -270,3 +270,58 @@ def test_command_is_not_refused_everywhere_when_unconfigured(
 
     monkeypatch.setattr(commands, "settings", lambda: _S())
     assert commands._wrong_channel({"channel_name": "anywhere"}) is None
+
+
+# ------------------------------------------------ edit, question, styling
+
+
+@pytest.mark.asyncio
+async def test_edit_refuses_a_name_it_does_not_know(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The whole reason `edit` exists beside `add`.
+
+    `add` upserts, so a mistyped name there creates a SECOND topic instead of
+    fixing the first. The name is unique, so "change this one" is always
+    answerable -- and unanswerable for a name that is not there.
+    """
+    from techtrend.deliver import commands
+
+    class _Result:
+        def one_or_none(self):
+            return None
+
+    class _Session:
+        async def execute(self, *_a, **_kw):
+            return _Result()
+
+    import contextlib
+
+    @contextlib.asynccontextmanager
+    async def fake_scope():
+        yield _Session()
+
+    monkeypatch.setattr(commands, "session_scope", fake_scope)
+    fallback, blocks = await commands._do_edit("nosuch a long enough replacement prompt")
+    assert "not on the watchlist" in fallback
+    assert any("add" in str(b) for b in blocks)
+
+
+@pytest.mark.asyncio
+async def test_a_short_question_is_refused_before_it_costs_anything() -> None:
+    """A grounded question is 4-8 billed searches. `/techtrend question hi`
+    must not become one."""
+    from techtrend.deliver import commands
+
+    fallback, _ = await commands._do_question("hi", "U1")
+    assert "longer" in fallback.lower()
+
+
+def test_every_reply_is_blocks_not_a_wall_of_text() -> None:
+    """Replies are (fallback, blocks). The fallback is what a notification
+    shows; the blocks are what gives the reply a shape."""
+    from techtrend.deliver.commands import HELP_BLOCKS, _blocks
+
+    out = _blocks(title="T", body="B", note="_n_")
+    assert out[0]["type"] == "section"
+    assert out[-1]["type"] == "context"
+    assert any(b["type"] == "header" for b in HELP_BLOCKS)
+    assert "edit" in str(HELP_BLOCKS)

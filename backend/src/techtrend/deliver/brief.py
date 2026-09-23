@@ -48,6 +48,12 @@ async def run(job: queue.Job) -> None:
     if not configured():
         return
 
+    # A one-off question. Not on the watchlist, never repeated, and rendered
+    # under the asker's own words rather than a topic name.
+    if ask := job.payload.get("ask"):
+        await _one(SlackClient(), "question", str(ask), heading=str(ask))
+        return
+
     if name := job.payload.get("name"):
         async with session_scope() as sess:
             rows = list((await sess.execute(_ONE, {"name": str(name)})).all())
@@ -75,7 +81,7 @@ async def run(job: queue.Job) -> None:
     telemetry.log.info("brief.run_done", topics=len(rows), searches=spent)
 
 
-async def _one(client: SlackClient, name: str, prompt: str) -> int:
+async def _one(client: SlackClient, name: str, prompt: str, *, heading: str | None = None) -> int:
     """Research one topic and post it. Returns searches spent.
 
     A failure is this topic's failure: the next one still runs, and the
@@ -109,12 +115,13 @@ async def _one(client: SlackClient, name: str, prompt: str) -> int:
     sources = [src for src in brief.sources if not _banned_source(src)]
     channel = s.slack_brief_channel
     assert channel is not None  # noqa: S101 - narrowed by configured()
-    fallback, blocks = _render(name, brief.text, sources, brief.searches)
+    fallback, blocks = _render(heading or name, brief.text, sources, brief.searches)
     # unfurl off: a source list of a dozen links would bury the brief itself.
     await client.post(channel, fallback, blocks=blocks, unfurl=False)
 
-    async with session_scope() as sess:
-        await sess.execute(_MARK, {"name": name})
+    if heading is None:
+        async with session_scope() as sess:
+            await sess.execute(_MARK, {"name": name})
     telemetry.log.info(
         "brief.posted",
         name=name,
@@ -162,7 +169,10 @@ def _source_line(sources: list) -> str:
 
 
 def _render(name: str, body: str, sources: list, searches: int) -> tuple[str, list[dict]]:
-    heading = f"Brief — {name}"
+    # Slack header blocks are plain_text and cap at 150 characters; a pasted
+    # question can be longer than that and would be rejected outright.
+    heading = name if len(name) > 40 else f"Brief — {name}"
+    heading = heading[:147] + "…" if len(heading) > 150 else heading
     blocks: list[dict] = [
         {"type": "header", "text": {"type": "plain_text", "text": heading, "emoji": True}},
         {"type": "section", "text": {"type": "mrkdwn", "text": to_mrkdwn(body)[:2900]}},
