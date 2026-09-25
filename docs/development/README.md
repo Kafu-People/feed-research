@@ -139,6 +139,12 @@ once.
 | --- | --- | --- |
 | 17 | [Milestones](17-milestones.md) | Build order → concrete deliverables and exit criteria |
 
+### Delivery
+
+| # | Document | Covers |
+| --- | --- | --- |
+| 18 | [Research briefs](18-research-briefs.md) | The Gemini watchlist: `/techtrend`, the three cadences, cost caps, Slack app setup |
+
 ---
 
 ## Non-negotiables, as code

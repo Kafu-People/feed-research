@@ -10,13 +10,53 @@ pipeline locally and start guessing.
 
 ## First run
 
+**You need:** Docker (with compose), Python 3.12, Node 22 with pnpm 9, and `make`.
+
 ```bash
-git clone … && cd techtrend
-cp .env.example .env
-make dev            # compose up, migrate, seed 20 sites, start api + worker
-make seed-corpus    # load the frozen test corpus — instant non-empty dashboard
-open http://localhost:8000/docs
+git clone https://github.com/arthasdev-bit/techtrend && cd techtrend
+cp backend/.env.example backend/.env   # NOTE: backend/, not the repo root
+make install                           # backend venv + pnpm workspace
+make dev                               # containers, migrations, demo seed
+make api                               # → http://localhost:8000/docs
 ```
+
+`make help` lists every target. The four you will actually use:
+
+| | |
+| --- | --- |
+| `make api` | backend with reload, on :8000 |
+| `make web` | Next.js on :3000 |
+| `make worker` | every pipeline stage, in one process |
+| `make backlog` | jobs by stage and state — the health check |
+
+**No API keys are needed.** `TT_AI_FAKE=true` is the default in the example env and swaps a
+deterministic stand-in into every model call, so the whole pipeline runs offline. Slack and
+Gemini stay inert until configured; each checks for both halves of its config and does
+nothing when either is missing.
+
+### Getting real articles
+
+The demo seed gives you a non-empty dashboard immediately. For real ones, run the worker and
+let it crawl the seeded sources:
+
+```bash
+make worker      # collect → read → group → match, continuously
+make backlog     # watch it move
+```
+
+First pass takes a few minutes. `make psql` opens a shell if you want to look.
+
+### Turning on the paid parts
+
+Both are off by default and both need TWO settings, so a half-configured integration is
+inert rather than broken. See [config](11-config.md) and
+[research briefs](18-research-briefs.md).
+
+| Feature | Needs |
+| --- | --- |
+| Slack delivery | `TT_SLACK_BOT_TOKEN` + `TT_SLACK_CHANNEL` |
+| Research briefs | `GEMINI_API_KEY` + `TT_SLACK_BRIEF_CHANNEL` |
+| AI summaries | `TT_AI_FAKE=false` and a key for whichever writer is set |
 
 ---
 

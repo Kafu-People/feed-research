@@ -23,7 +23,26 @@ class Deps:
 | `read` | `read:article:{url_hash}` | `group:article:{id}` | Upsert on `url_hash` |
 | `group` | `group:article:{id}` | `judge:story:{id}` | `story_id` set once; re-run is a no-op |
 | `judge` | `judge:story:{id}` | `match:story:{id}` | `judged_at IS NULL` guard |
-| `match` | `match:story:{id}` | — | `PRIMARY KEY (topic_id, story_id)` upsert |
+| `match` | `match:story:{id}` | `notify` / `hourly` | `PRIMARY KEY (topic_id, story_id)` upsert |
+
+The five above are the article pipeline, and they run in order. The rest are delivery and
+housekeeping: they are enqueued by a time bucket rather than by the stage before them, so
+each one fires on its own schedule and none of them blocks the pipeline.
+
+| Stage | Fires | What it does |
+| --- | --- | --- |
+| `hourly` | every hour, 4 min past | One report of the hour's matched stories to `#techtrend-ai` |
+| `notify` | per story | The older per-story card. Unused while `slack_delivery_mode=hourly` |
+| `summarize` | hourly | Summaries for cards that have none. Unused in hourly mode |
+| `digest` | 18:00 local | The day's roll-up |
+| `brief` | 18:00 local | The Gemini research watchlist — daily, plus weekly on Monday and monthly on the 1st |
+| `discuss` | on demand | Answers a question asked in a brief's thread |
+| `maintenance` | every 5 min | Reaps stale locks, purges done jobs |
+| `judge` | **off** | AI scoring. Not in the worker's stage list: ~17,000 pending jobs, and it costs per story |
+| `feedback` | **off** | Personalisation, removed when the product became one shared board |
+
+The live stage list is in `backend/deploy/systemd/techtrend-worker.service`. A stage that is
+in `HANDLERS` but not in that list simply never runs — which is how `judge` is disabled.
 
 ---
 
