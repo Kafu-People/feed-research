@@ -108,7 +108,7 @@ async def run(job: queue.Job) -> None:
     question = str(job.payload["question"])
 
     async with session_scope() as sess:
-        used = (await sess.execute(_ANSWERED_TODAY)).scalar_one()
+        used: int = (await sess.execute(_ANSWERED_TODAY)).scalar_one()
     client = SlackClient()
     if used > s.brief_replies_per_day:
         telemetry.log.warning("discuss.budget_reached", used=used)

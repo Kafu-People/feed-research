@@ -240,7 +240,7 @@ async def _do_question(rest: str, user: str | None) -> tuple[str, list[Block]]:
             ),
         )
     async with session_scope() as s:
-        used = (await s.execute(_ASKED_TODAY)).scalar_one()
+        used: int = (await s.execute(_ASKED_TODAY)).scalar_one()
     if used >= settings().brief_questions_per_day:
         return (
             "Daily question limit reached",
@@ -342,7 +342,9 @@ async def _do_add(rest: str, user: str | None) -> tuple[str, list[Block]]:
             ),
         )
     async with session_scope() as s:
-        created = (await s.execute(_ADD, {"name": name, "prompt": prompt, "by": user})).scalar_one()
+        created: bool = (
+            await s.execute(_ADD, {"name": name, "prompt": prompt, "by": user})
+        ).scalar_one()
     verb = "Now watching" if created else "Updated"
     telemetry.log.info("command.add", name=name, created=bool(created), user=user)
     note = "_First brief arrives with tomorrow's run. `/techtrend run " + name + "` does it now._"

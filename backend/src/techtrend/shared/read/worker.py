@@ -132,7 +132,7 @@ async def _upsert(params: dict[str, Any]) -> int:
 
     params = {**params, "extraction": json.dumps(params["extraction"])}
     async with session_scope() as s:
-        article_id = (await s.execute(_UPSERT, params)).scalar_one()
+        article_id: int = (await s.execute(_UPSERT, params)).scalar_one()
         # Same transaction: the group job exists iff the article row does.
         await queue.enqueue(
             "group", f"group:article:{article_id}", {"article_id": article_id}, session=s

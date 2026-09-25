@@ -39,7 +39,7 @@ async def seed_sites() -> dict[str, int]:
     sites = endpoints = 0
     async with session_scope() as s:
         for seed in (*TECH, *WORK_TREND, *HN_VOICE, *DEV_MARKET, *VENTURE, *ANALYSIS):
-            site_id = (
+            site_id: int = (
                 await s.execute(
                     _UPSERT_SITE,
                     {
