@@ -33,29 +33,25 @@ jobs:
       - run: uv run alembic upgrade head
       # The read stage writes article bodies to object storage, so three of
       # its tests need a bucket. Without one they fail on NoCredentialsError:
-      # with no endpoint configured, boto3 falls back to its default
-      # credential chain, and a runner has no credentials to find.
+      # with no endpoint set, boto3 falls back to its default credential
+      # chain, and a runner has no credentials to find.
       #
-      # `docker run`, not a service container: the image needs the command
-      # `server /data`, and a service container cannot set one.
-      #
-      # quay.io, not Docker Hub. `minio/minio` there now answers "pull access
-      # denied", and `bitnami/minio:latest` no longer exists at all -- both
-      # tried, both failed the build. quay.io is MinIO's own registry, and
-      # this exact image and health check were pulled and run before pushing.
-      - name: Start MinIO
+      # `moto`, a pip-installed S3 stub, rather than a MinIO container. Three
+      # registries were tried and all three broke the build: bitnami/minio's
+      # `latest` tag does not exist, Docker Hub's minio/minio answers "pull
+      # access denied", and quay.io's answers "unauthorized". A CI step that
+      # depends on a third-party registry staying reachable is a CI step that
+      # fails for reasons unrelated to the code -- and these tests only need
+      # put, get and create_bucket, which a stub serves exactly as well.
+      - name: Start S3 stub
         run: |
-          docker run -d --name minio -p 9000:9000 \
-            -e MINIO_ROOT_USER=dev -e MINIO_ROOT_PASSWORD=devdevdev \
-            quay.io/minio/minio server /data
-          for i in $(seq 1 40); do
-            if curl -fsS http://localhost:9000/minio/health/live; then
-              echo "MinIO ready"; exit 0
-            fi
-            sleep 2
+          uv pip install "moto[server]"
+          uv run moto_server -p 9000 &
+          for i in $(seq 1 30); do
+            curl -fsS -o /dev/null http://localhost:9000/ && echo "S3 stub ready" && exit 0
+            sleep 1
           done
-          echo "MinIO did not come up" >&2
-          docker logs minio >&2
+          echo "moto_server did not come up" >&2
           exit 1
       - run: uv run pytest tests -q
 
