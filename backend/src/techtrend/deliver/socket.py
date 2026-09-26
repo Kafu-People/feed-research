@@ -20,7 +20,7 @@ from typing import Any
 import httpx
 import websockets
 
-from techtrend.deliver import qa
+from techtrend.deliver import commands, discuss, qa
 from techtrend.deliver.slack import SlackClient
 from techtrend.platform import telemetry
 from techtrend.platform.config import settings
@@ -62,8 +62,6 @@ async def _dispatch(client: SlackClient, envelope: dict[str, Any], bot_id: str |
     # to POST to. They arrive as their own envelope type, with the command in
     # the payload rather than in an `event`.
     if envelope.get("type") == "slash_commands":
-        from techtrend.deliver import commands
-
         await commands.handle(payload)
         return
 
@@ -73,8 +71,6 @@ async def _dispatch(client: SlackClient, envelope: dict[str, Any], bot_id: str |
     # a thread under a brief is a conversation about that brief, and asking
     # people to type `@techtrend` first is friction for no benefit.
     if event.get("type") == "message":
-        from techtrend.deliver import discuss
-
         own = bool(bot_id and event.get("bot_id") == bot_id)
         # One line per message event, with the reason it was or was not
         # taken. Without it "I sent a message and nothing happened" has three
@@ -98,6 +94,22 @@ async def _dispatch(client: SlackClient, envelope: dict[str, Any], bot_id: str |
     if bot_id and event.get("bot_id") == bot_id:
         return
     await qa.handle_mention(client, event, bot_id=bot_id)
+
+
+async def _safe_dispatch(client: SlackClient, envelope: dict[str, Any], bot_id: str | None) -> None:
+    """Dispatch, and LOG anything that escapes.
+
+    These run detached, because Slack wants an ack inside 3 seconds and the
+    work takes longer. A detached task that raises prints "Task exception was
+    never retrieved" to stderr and nothing else -- no stage, no level, nothing
+    a log search would find. `/techtrend` was dead for two days behind exactly
+    that: an ImportError, visible only to whoever thought to read the raw
+    journal.
+    """
+    try:
+        await _dispatch(client, envelope, bot_id)
+    except Exception:  # noqa: BLE001 - one event, never the listener
+        telemetry.log.exception("slackbot.dispatch_failed", kind=envelope.get("type"))
 
 
 async def run(stop: asyncio.Event | None = None) -> None:
@@ -140,7 +152,7 @@ async def run(stop: asyncio.Event | None = None) -> None:
                         if envelope_id in seen:
                             continue
                         seen.append(envelope_id)
-                    asyncio.create_task(_dispatch(client, msg, bot_id))
+                    asyncio.create_task(_safe_dispatch(client, msg, bot_id))
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - the listener outlives any one failure

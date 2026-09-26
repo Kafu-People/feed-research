@@ -227,3 +227,48 @@ def test_every_giving_up_path_resolves_the_note() -> None:
         if any("enabled()" in w for w in window):
             continue
         assert any("_give_up" in w for w in window), f"unresolved note at line {i}"
+
+
+# ------------------------------- the listener must not fail silently
+
+
+@pytest.mark.asyncio
+async def test_a_dispatch_failure_is_logged_not_swallowed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`/techtrend` was dead for two days behind an ImportError.
+
+    Dispatch runs detached, because Slack wants an ack inside 3 seconds and
+    the work takes longer. A detached task that raises prints "Task exception
+    was never retrieved" to stderr and nothing else -- no stage, no level,
+    nothing a log search finds. So the wrapper catches and logs, and the
+    listener survives.
+    """
+    from techtrend.deliver import socket as sock
+
+    logged: list[str] = []
+
+    async def boom(client, envelope, bot_id):
+        raise ImportError("cannot import name 'Block'")
+
+    monkeypatch.setattr(sock, "_dispatch", boom)
+    monkeypatch.setattr(sock.telemetry.log, "exception", lambda event, **kw: logged.append(event))
+    # Must not raise: one bad event never takes the listener down.
+    await sock._safe_dispatch(object(), {"type": "slash_commands"}, "B1")
+    assert logged == ["slackbot.dispatch_failed"]
+
+
+def test_the_listener_imports_its_handlers_at_boot() -> None:
+    """Lazily importing `commands` inside the dispatcher is what let a stale
+    process serve new code against an old module: `slack.py` gained `Block`
+    51 minutes AFTER the listener started, and the import failed only when
+    somebody finally typed the command. Imported at module scope, that same
+    mistake refuses to start."""
+    import inspect
+
+    from techtrend.deliver import socket as sock
+
+    src = inspect.getsource(sock._dispatch)
+    assert "import" not in src, "handlers must be imported at module scope"
+    assert sock.commands is not None
+    assert sock.discuss is not None
