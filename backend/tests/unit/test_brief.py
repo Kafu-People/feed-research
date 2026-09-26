@@ -771,3 +771,33 @@ def test_transient_is_not_quota() -> None:
 
     assert not issubclass(Transient, QuotaExceeded)
     assert not issubclass(QuotaExceeded, Transient)
+
+
+def test_a_403_is_its_own_error_not_a_generic_failure() -> None:
+    """403 means the PROJECT is blocked, which needs a human -- not a retry,
+    and not the fallback model.
+
+    Seen 2026-09-26: `models.list` kept answering 200 while every
+    `generateContent` answered "your project has been denied access". Caught as
+    a generic failure it read as empty summaries, and the hourly report posted
+    bare headlines for hours while the log said only
+    `gemini.summary_failed`.
+    """
+    from techtrend.ai.gemini import Denied, QuotaExceeded, Transient
+
+    for other in (QuotaExceeded, Transient):
+        assert not issubclass(Denied, other)
+        assert not issubclass(other, Denied)
+
+
+def test_denied_escapes_the_per_story_catch() -> None:
+    """`summarize_batch` swallows one story's failure so the others still post.
+    A denial is not one story's failure, so it must escape that catch or the
+    report silently loses every summary."""
+    import inspect
+
+    from techtrend.ai import gemini_client
+
+    src = inspect.getsource(gemini_client.GeminiClient.summarize_batch)
+    assert "gemini.Denied" in src
+    assert "raise" in src

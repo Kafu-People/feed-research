@@ -77,7 +77,10 @@ class GeminiClient:
             async with sem:
                 try:
                     return sid, await self.summarize(title, body)
-                except gemini.Transient:
+                except (gemini.Transient, gemini.Denied):
+                    # Denied is not this story's problem and not retryable.
+                    # Letting it through means the hourly report fails loudly
+                    # instead of posting headlines with nothing under them.
                     raise
                 except Exception:  # noqa: BLE001 - one story, not the batch
                     log.warning("gemini.summary_failed", story_id=sid)

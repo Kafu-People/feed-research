@@ -93,6 +93,19 @@ class Transient(RuntimeError):
     """
 
 
+class Denied(RuntimeError):
+    """HTTP 403 -- the project is blocked, not the request.
+
+    Its own type because it needs a human, not a retry and not a fallback
+    model. Seen 2026-09-26: `models.list` kept returning 200 while every
+    `generateContent` answered "Your project has been denied access", so the
+    key was valid and the project was not. Swallowed as a generic failure it
+    looked like empty summaries: the hourly report posted headlines with
+    nothing under them for hours, and the log said `gemini.summary_failed`
+    without the reason.
+    """
+
+
 class QuotaExceeded(RuntimeError):
     """HTTP 429.
 
@@ -182,6 +195,8 @@ async def write(system: str, user: str, *, model: str | None = None) -> tuple[st
             )
         except httpx.HTTPError as e:
             raise Transient(f"gemini unreachable: {e!r}") from e
+    if r.status_code == 403:
+        raise Denied(r.text[:300])
     if r.status_code == 429:
         raise QuotaExceeded(r.text[:300])
     if r.status_code >= 500:
@@ -230,6 +245,8 @@ async def _ask(prompt: str, model: str) -> Brief:
             # A timeout on a two-minute grounded search is Google being slow,
             # not the request being wrong.
             raise Transient(f"gemini unreachable: {e!r}") from e
+    if r.status_code == 403:
+        raise Denied(r.text[:300])
     if r.status_code == 429:
         raise QuotaExceeded(r.text[:300])
     if r.status_code >= 500:
