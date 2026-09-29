@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TechTrend Architecture</title>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --ink: #1d1f23;
+    --muted: #5f6570;
+    --line: #8a909a;
+    --border: #d9dbdf;
+    --client: #e8f0fe;   --client-b: #4a78c9;
+    --api: #e7f5ee;      --api-b: #2f8a5b;
+    --data: #fdf3e3;     --data-b: #b7791f;
+    --worker: #f1ecfb;   --worker-b: #7453b8;
+    --ext: #f2f2f2;      --ext-b: #7b7f87;
+    --slack: #fbe9ef;    --slack-b: #b8466c;
+    --warn: #b54708;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171a;
+      --panel: #1d2024;
+      --ink: #e7e9ec;
+      --muted: #a2a8b2;
+      --line: #7d8490;
+      --border: #33373d;
+      --client: #1c2a42;   --client-b: #7ea6ec;
+      --api: #16302a;      --api-b: #5cc493;
+      --data: #33291a;     --data-b: #e0a54a;
+      --worker: #282039;   --worker-b: #a88ae6;
+      --ext: #26292d;      --ext-b: #9aa0a9;
+      --slack: #3a1e29;    --slack-b: #e57fa3;
+      --warn: #f0a060;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171a;
+    --panel: #1d2024;
+    --ink: #e7e9ec;
+    --muted: #a2a8b2;
+    --line: #7d8490;
+    --border: #33373d;
+    --client: #1c2a42;   --client-b: #7ea6ec;
+    --api: #16302a;      --api-b: #5cc493;
+    --data: #33291a;     --data-b: #e0a54a;
+    --worker: #282039;   --worker-b: #a88ae6;
+    --ext: #26292d;      --ext-b: #9aa0a9;
+    --slack: #3a1e29;    --slack-b: #e57fa3;
+    --warn: #f0a060;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 1080px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 28px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  h2 { font-size: 19px; margin: 44px 0 6px; }
+  p.lede { color: var(--muted); margin: 0 0 8px; max-width: 70ch; }
+  p.sub { color: var(--muted); margin: 0 0 14px; max-width: 75ch; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    overflow-x: auto;
+  }
+  svg { display: block; width: 100%; height: auto; min-width: 720px; }
+  svg text { fill: var(--ink); font-family: inherit; }
+  svg .t  { font-size: 14px; font-weight: 600; }
+  svg .s  { font-size: 11.5px; fill: var(--muted); }
+  svg .lbl { font-size: 11px; fill: var(--muted); }
+  svg .warn { font-size: 11px; fill: var(--warn); font-weight: 600; }
+  svg .edge { stroke: var(--line); stroke-width: 1.5; fill: none; }
+  svg .edge.dash { stroke-dasharray: 5 4; }
+  svg .arrowhead { fill: var(--line); }
+  .b-client { fill: var(--client); stroke: var(--client-b); }
+  .b-api    { fill: var(--api);    stroke: var(--api-b); }
+  .b-data   { fill: var(--data);   stroke: var(--data-b); }
+  .b-worker { fill: var(--worker); stroke: var(--worker-b); }
+  .b-ext    { fill: var(--ext);    stroke: var(--ext-b); }
+  .b-slack  { fill: var(--slack);  stroke: var(--slack-b); }
+  svg rect { stroke-width: 1.5; }
+  svg .inner { fill: var(--panel); stroke: var(--data-b); stroke-width: 1; }
+  svg .winner { fill: var(--panel); stroke: var(--worker-b); stroke-width: 1; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 12px; font-size: 13px; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .sw { width: 14px; height: 14px; border-radius: 3px; border: 1.5px solid; display: inline-block; }
+
+  .layers { display: grid; gap: 0; }
+  .layer {
+    border: 1.5px solid; border-radius: 10px; padding: 14px 16px;
+    display: grid; grid-template-columns: 150px 1fr 1fr; gap: 12px; align-items: start;
+  }
+  .layer h3 { margin: 0; font-size: 16px; }
+  .layer .k { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 2px; }
+  .layer div { font-size: 14px; }
+  .l-shared   { background: var(--data);   border-color: var(--data-b); }
+  .l-topic    { background: var(--api);    border-color: var(--api-b); }
+  .l-personal { background: var(--client); border-color: var(--client-b); }
+  .down { text-align: center; color: var(--muted); font-size: 13px; padding: 4px 0; }
+  @media (max-width: 640px) {
+    .layer { grid-template-columns: 1fr; }
+  }
+
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 0.9em; }
+  .note { margin-top: 12px; font-size: 13px; color: var(--muted); }
+  .note b { color: var(--warn); }
+</style>
+</head>
+<body>
+<main>
+  <h1>TechTrend architecture</h1>
+  <p class="lede">A personalised news pipeline. Workers turn thousands of feeds into deduplicated,
+    judged stories; the API ranks them per topic for the web and mobile apps; Slack gets hourly
+    reports, digests and Gemini research briefs.</p>
+
+  <!-- ============================================================ 1. topology -->
+  <h2>1 · What runs where</h2>
+  <p class="sub">Four long-running processes (the systemd units in <code>backend/deploy/systemd</code>).
+    Postgres is the store, the job queue, the scheduler and the vector index. There's no message
+    broker and no cron.</p>
+
+  <div class="card">
+  <svg viewBox="0 0 1000 640" role="img" aria-label="System topology diagram">
+    <defs>
+      <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" class="arrowhead"/>
+      </marker>
+    </defs>
+
+    <!-- row 1: readers -->
+    <rect x="40"  y="20" width="190" height="62" rx="8" class="b-client"/>
+    <text x="135" y="46" text-anchor="middle" class="t">Web app</text>
+    <text x="135" y="66" text-anchor="middle" class="s">Next.js · techtrend-web</text>
+
+    <rect x="250" y="20" width="190" height="62" rx="8" class="b-client"/>
+    <text x="345" y="46" text-anchor="middle" class="t">Mobile app</text>
+    <text x="345" y="66" text-anchor="middle" class="s">Expo / React Native</text>
+
+    <text x="240" y="104" text-anchor="middle" class="lbl">shared TS core + typed API client</text>
+
+    <rect x="700" y="20" width="260" height="62" rx="8" class="b-slack"/>
+    <text x="830" y="46" text-anchor="middle" class="t">Slack workspace</text>
+    <text x="830" y="66" text-anchor="middle" class="s">news channel · briefs channel</text>
+
+    <!-- row 2: API + slackbot -->
+    <rect x="40" y="140" width="400" height="74" rx="8" class="b-api"/>
+    <text x="240" y="168" text-anchor="middle" class="t">API · techtrend api</text>
+    <text x="240" y="188" text-anchor="middle" class="s">FastAPI · /v1/dashboard · topics · events · suggestions</text>
+    <text x="240" y="204" text-anchor="middle" class="s">topic distiller + live preview (~2 s, interactive)</text>
+
+    <rect x="700" y="140" width="260" height="74" rx="8" class="b-slack"/>
+    <text x="830" y="168" text-anchor="middle" class="t">Slackbot · techtrend slackbot</text>
+    <text x="830" y="188" text-anchor="middle" class="s">Socket Mode (dials out)</text>
+    <text x="830" y="204" text-anchor="middle" class="s">/techtrend · @mention Q&amp;A</text>
+
+    <!-- row 3: data -->
+    <rect x="40" y="272" width="130" height="118" rx="8" class="b-data"/>
+    <text x="105" y="316" text-anchor="middle" class="t">Redis</text>
+    <text x="105" y="336" text-anchor="middle" class="s">hot-read cache</text>
+
+    <rect x="200" y="272" width="600" height="118" rx="8" class="b-data"/>
+    <text x="500" y="296" text-anchor="middle" class="t">Postgres 16 + pgvector</text>
+    <rect x="216" y="310" width="134" height="64" rx="6" class="inner"/>
+    <text x="283" y="336" text-anchor="middle" class="t" style="font-size:13px">Store</text>
+    <text x="283" y="355" text-anchor="middle" class="s">3 layers of tables</text>
+    <rect x="362" y="310" width="134" height="64" rx="6" class="inner"/>
+    <text x="429" y="336" text-anchor="middle" class="t" style="font-size:13px">Job queue</text>
+    <text x="429" y="355" text-anchor="middle" class="s">SKIP LOCKED claims</text>
+    <rect x="508" y="310" width="134" height="64" rx="6" class="inner"/>
+    <text x="575" y="336" text-anchor="middle" class="t" style="font-size:13px">Schedules</text>
+    <text x="575" y="355" text-anchor="middle" class="s">next_check_at columns</text>
+    <rect x="654" y="310" width="134" height="64" rx="6" class="inner"/>
+    <text x="721" y="336" text-anchor="middle" class="t" style="font-size:13px">Vector index</text>
+    <text x="721" y="355" text-anchor="middle" class="s">HNSW embeddings</text>
+
+    <rect x="830" y="272" width="130" height="118" rx="8" class="b-data"/>
+    <text x="895" y="316" text-anchor="middle" class="t">S3 / MinIO</text>
+    <text x="895" y="336" text-anchor="middle" class="s">article HTML</text>
+    <text x="895" y="352" text-anchor="middle" class="s">+ extracted text</text>
+    <text x="895" y="368" text-anchor="middle" class="s">(never served)</text>
+
+    <!-- row 4: workers -->
+    <rect x="40" y="448" width="920" height="84" rx="8" class="b-worker"/>
+    <text x="500" y="472" text-anchor="middle" class="t">Workers · techtrend worker --stage …</text>
+    <text x="500" y="494" text-anchor="middle" class="s">pipeline: collect · read · group · judge · match</text>
+    <text x="500" y="514" text-anchor="middle" class="s">delivery: notify · summarize · hourly · digest · brief · discuss · feedback · maintenance</text>
+
+    <!-- row 5: external -->
+    <rect x="40"  y="572" width="210" height="52" rx="8" class="b-ext"/>
+    <text x="145" y="594" text-anchor="middle" class="t">News sites &amp; feeds</text>
+    <text x="145" y="612" text-anchor="middle" class="s">RSS · sitemaps · 1–2 conn/host</text>
+
+    <rect x="280" y="572" width="210" height="52" rx="8" class="b-ext"/>
+    <text x="385" y="594" text-anchor="middle" class="t">Claude Haiku 4.5</text>
+    <text x="385" y="612" text-anchor="middle" class="s">judge · distill · summaries (batch)</text>
+
+    <rect x="520" y="572" width="210" height="52" rx="8" class="b-ext"/>
+    <text x="625" y="594" text-anchor="middle" class="t">Gemini + Google Search</text>
+    <text x="625" y="612" text-anchor="middle" class="s">briefs · thread answers · prose</text>
+
+    <rect x="760" y="572" width="200" height="52" rx="8" class="b-ext"/>
+    <text x="860" y="594" text-anchor="middle" class="t">Slack Web API</text>
+    <text x="860" y="612" text-anchor="middle" class="s">chat.postMessage</text>
+
+    <!-- edges: clients -> API -->
+    <path class="edge" d="M135,82 V140" marker-end="url(#ah)"/>
+    <path class="edge" d="M345,82 V140" marker-end="url(#ah)"/>
+    <text x="100" y="124" class="lbl">HTTPS</text>
+
+    <!-- slack <-> slackbot -->
+    <path class="edge" d="M830,82 V140" marker-start="url(#ah)" marker-end="url(#ah)"/>
+    <text x="838" y="116" class="lbl">WebSocket</text>
+
+    <!-- API -> postgres / redis -->
+    <path class="edge" d="M320,214 V272" marker-start="url(#ah)" marker-end="url(#ah)"/>
+    <text x="328" y="246" class="lbl">reads Shared + Topic, writes Personal</text>
+    <path class="edge" d="M105,214 V272" marker-end="url(#ah)"/>
+    <text x="113" y="246" class="lbl">cached reads</text>
+
+    <!-- slackbot -> postgres -->
+    <path class="edge dash" d="M760,214 V272" marker-end="url(#ah)"/>
+
+    <!-- workers <-> postgres / s3 -->
+    <path class="edge" d="M500,448 V390" marker-start="url(#ah)" marker-end="url(#ah)"/>
+    <text x="508" y="424" class="lbl">claim jobs · write Shared + Topic</text>
+    <path class="edge" d="M895,448 V390" marker-start="url(#ah)" marker-end="url(#ah)"/>
+    <text x="903" y="424" class="lbl">bodies</text>
+
+    <!-- workers -> external -->
+    <path class="edge" d="M145,532 V572" marker-end="url(#ah)"/>
+    <path class="edge" d="M385,532 V572" marker-end="url(#ah)"/>
+    <path class="edge" d="M625,532 V572" marker-end="url(#ah)"/>
+    <path class="edge" d="M860,532 V572" marker-end="url(#ah)"/>
+
+    <!-- Slack Web API -> workspace (right rail) -->
+    <path class="edge dash" d="M960,598 H984 V51 H960" marker-end="url(#ah)"/>
+    <text x="970" y="236" class="lbl" transform="rotate(90 970 236)">posts</text>
+  </svg>
+  <div class="legend">
+    <span><i class="sw" style="background:var(--client);border-color:var(--client-b)"></i>Clients</span>
+    <span><i class="sw" style="background:var(--api);border-color:var(--api-b)"></i>API</span>
+    <span><i class="sw" style="background:var(--slack);border-color:var(--slack-b)"></i>Slack</span>
+    <span><i class="sw" style="background:var(--data);border-color:var(--data-b)"></i>Data stores</span>
+    <span><i class="sw" style="background:var(--worker);border-color:var(--worker-b)"></i>Workers</span>
+    <span><i class="sw" style="background:var(--ext);border-color:var(--ext-b)"></i>External services</span>
+  </div>
+  </div>
+
+  <!-- ============================================================ 2. pipeline -->
+  <h2>2 · The pipeline, article to reader</h2>
+  <p class="sub">Each stage is a job type in the Postgres queue. A stage finishing enqueues the next
+    one in the same transaction, so a row can't be committed without its follow-up job.</p>
+
+  <div class="card">
+  <svg viewBox="0 0 1000 440" role="img" aria-label="Pipeline stage diagram">
+    <defs>
+      <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+        <path d="M0,0 L10,5 L0,10 z" class="arrowhead"/>
+      </marker>
+    </defs>
+
+    <text x="20" y="22" class="lbl">SHARED LAYER — computed once, identical for everyone</text>
+    <text x="780" y="22" class="lbl">TOPIC LAYER</text>
+
+    <rect x="20"  y="34" width="160" height="80" rx="8" class="b-worker"/>
+    <text x="100" y="60" text-anchor="middle" class="t">collect</text>
+    <text x="100" y="80" text-anchor="middle" class="s">poll feeds when due</text>
+    <text x="100" y="96" text-anchor="middle" class="s">new URLs → articles</text>
+
+    <rect x="210" y="34" width="160" height="80" rx="8" class="b-worker"/>
+    <text x="290" y="60" text-anchor="middle" class="t">read</text>
+    <text x="290" y="80" text-anchor="middle" class="s">fetch + extract text</text>
+    <text x="290" y="96" text-anchor="middle" class="s">body → S3, embedding</text>
+
+    <rect x="400" y="34" width="160" height="80" rx="8" class="b-worker"/>
+    <text x="480" y="60" text-anchor="middle" class="t">group</text>
+    <text x="480" y="80" text-anchor="middle" class="s">same event → one story</text>
+    <text x="480" y="96" text-anchor="middle" class="s">source_count</text>
+
+    <rect x="590" y="34" width="160" height="80" rx="8" class="b-worker"/>
+    <text x="670" y="60" text-anchor="middle" class="t">judge</text>
+    <text x="670" y="80" text-anchor="middle" class="s">Haiku: novelty, type,</text>
+    <text x="670" y="96" text-anchor="middle" class="s">one summary per story</text>
+    <text x="670" y="130" text-anchor="middle" class="warn">not in the production worker unit</text>
+
+    <rect x="780" y="34" width="190" height="80" rx="8" class="b-api"/>
+    <text x="875" y="60" text-anchor="middle" class="t">match</text>
+    <text x="875" y="80" text-anchor="middle" class="s">keywords + vector recall</text>
+    <text x="875" y="96" text-anchor="middle" class="s">story × topic → score</text>
+
+    <path class="edge" d="M180,74 H210" marker-end="url(#ah2)"/>
+    <path class="edge" d="M370,74 H400" marker-end="url(#ah2)"/>
+    <path class="edge" d="M560,74 H590" marker-end="url(#ah2)"/>
+    <path class="edge" d="M750,74 H780" marker-end="url(#ah2)"/>
+
+    <!-- bus from match to delivery -->
+    <path class="edge" d="M875,114 V160 H80" />
+    <text x="20" y="152" class="lbl">DELIVERY — reads matches; never writes Shared</text>
+    <path class="edge" d="M80,160 V196"  marker-end="url(#ah2)"/>
+    <path class="edge" d="M270,160 V196" marker-end="url(#ah2)"/>
+    <path class="edge" d="M460,160 V196" marker-end="url(#ah2)"/>
+    <path class="edge" d="M650,160 V196" marker-end="url(#ah2)"/>
+    <path class="edge" d="M840,160 V196" marker-end="url(#ah2)"/>
+
+    <rect x="20"  y="196" width="120" height="74" rx="8" class="b-client"/>
+    <text x="80" y="222" text-anchor="middle" class="t">dashboard</text>
+    <text x="80" y="240" text-anchor="middle" class="s">API ranks per user</text>
+    <text x="80" y="256" text-anchor="middle" class="s">no padding</text>
+
+    <rect x="200" y="196" width="140" height="74" rx="8" class="b-slack"/>
+    <text x="270" y="222" text-anchor="middle" class="t">notify</text>
+    <text x="270" y="240" text-anchor="middle" class="s">stories over the</text>
+    <text x="270" y="256" text-anchor="middle" class="s">per-topic floor</text>
+
+    <rect x="390" y="196" width="140" height="74" rx="8" class="b-slack"/>
+    <text x="460" y="222" text-anchor="middle" class="t">summarize</text>
+    <text x="460" y="240" text-anchor="middle" class="s">plain-language,</text>
+    <text x="460" y="256" text-anchor="middle" class="s">Haiku batch (½ price)</text>
+
+    <rect x="580" y="196" width="140" height="74" rx="8" class="b-slack"/>
+    <text x="650" y="222" text-anchor="middle" class="t">hourly</text>
+    <text x="650" y="240" text-anchor="middle" class="s">one report: every</text>
+    <text x="650" y="256" text-anchor="middle" class="s">link + its summary</text>
+
+    <rect x="770" y="196" width="140" height="74" rx="8" class="b-slack"/>
+    <text x="840" y="222" text-anchor="middle" class="t">digest / report</text>
+    <text x="840" y="240" text-anchor="middle" class="s">daily digest,</text>
+    <text x="840" y="256" text-anchor="middle" class="s">weekly roundup</text>
+
+    <!-- feedback loop -->
+    <text x="20" y="300" class="lbl">events → feedback worker → Personal weights (private to one user)</text>
+
+    <!-- research track -->
+    <line x1="20" y1="340" x2="980" y2="340" stroke="var(--border)"/>
+    <text x="20" y="362" class="lbl">RESEARCH — separate from the pipeline</text>
+
+    <rect x="20" y="372" width="220" height="56" rx="8" class="b-data"/>
+    <text x="130" y="396" text-anchor="middle" class="t">Watchlist</text>
+    <text x="130" y="414" text-anchor="middle" class="s">brief_topics, user-managed</text>
+
+    <rect x="290" y="372" width="230" height="56" rx="8" class="b-slack"/>
+    <text x="405" y="396" text-anchor="middle" class="t">brief</text>
+    <text x="405" y="414" text-anchor="middle" class="s">Gemini: daily · weekly · monthly</text>
+
+    <rect x="570" y="372" width="230" height="56" rx="8" class="b-slack"/>
+    <text x="685" y="396" text-anchor="middle" class="t">discuss</text>
+    <text x="685" y="414" text-anchor="middle" class="s">Gemini answers thread replies</text>
+
+    <rect x="850" y="372" width="120" height="56" rx="8" class="b-ext"/>
+    <text x="910" y="396" text-anchor="middle" class="t">briefs</text>
+    <text x="910" y="414" text-anchor="middle" class="s">channel</text>
+
+    <path class="edge" d="M240,400 H290" marker-end="url(#ah2)"/>
+    <path class="edge" d="M520,400 H570" marker-end="url(#ah2)"/>
+    <path class="edge" d="M800,400 H850" marker-end="url(#ah2)"/>
+  </svg>
+  <p class="note"><b>Note:</b> <code>judge</code> is registered as a stage but
+    <code>techtrend-worker.service</code> has never listed it, and the repo doesn't say why. Also,
+    <code>brief</code> fires once the local clock passes <code>TT_BRIEF_HOUR</code> (18:00), and
+    <code>discuss</code> is off unless <code>TT_BRIEF_DISCUSS_ENABLED=true</code>.</p>
+  </div>
+
+  <!-- ============================================================ 3. layers -->
+  <h2>3 · The three data layers</h2>
+  <p class="sub">Information flows down only. <code>import-linter</code> fails the build if a lower
+    layer's code imports upward, and no user action can change a shared value.</p>
+
+  <div class="layers">
+    <div class="layer l-shared">
+      <h3>Shared</h3>
+      <div><div class="k">Holds</div>articles, stories, summaries, novelty, story type, source authority</div>
+      <div><div class="k">Written by</div>collect · read · group · judge (workers). One row per real-world thing.</div>
+    </div>
+    <div class="down">↓ read only</div>
+    <div class="layer l-topic">
+      <h3>Topic</h3>
+      <div><div class="k">Holds</div>keyword lists, topic embeddings, match scores (kept 30 days)</div>
+      <div><div class="k">Written by</div>match (workers), distiller on topic creation. Shared by users with the same list.</div>
+    </div>
+    <div class="down">↓ read only</div>
+    <div class="layer l-personal">
+      <h3>Personal</h3>
+      <div><div class="k">Holds</div>weights, seen list, events</div>
+      <div><div class="k">Written by</div>API + feedback worker. One user; writes nothing outside itself.</div>
+    </div>
+  </div>
+
+  <!-- ============================================================ 4. rules -->
+  <h2>4 · Rules enforced by a missing code path</h2>
+  <div class="card">
+  <table>
+    <thead><tr><th>Rule</th><th>Why it can't be broken</th></tr></thead>
+    <tbody>
+      <tr><td>Never serve the article body</td><td><code>CardOut</code> has no text field; bodies live only in S3</td></tr>
+      <tr><td>Never bypass a paywall</td><td>The fetcher has no cookie jar and no auth-header parameter</td></tr>
+      <tr><td>Never rank on raw clicks</td><td><code>EventKind</code> has no <code>click</code> member</td></tr>
+      <tr><td>Never pad a short day</td><td>No minimum-cards setting, no backfill branch</td></tr>
+      <tr><td>Information flows down only</td><td><code>import-linter</code> contracts fail CI</td></tr>
+      <tr><td>1–2 connections per site</td><td><code>per_host_concurrency</code> is <code>Field(ge=1, le=2)</code>; more is a startup failure</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p class="note">Sources: <code>docs/architecture/</code>, <code>backend/src/techtrend/cli.py</code>,
+    <code>backend/deploy/systemd/</code>. Generated 2026-09-24.</p>
+</main>
+</body>
+</html>
