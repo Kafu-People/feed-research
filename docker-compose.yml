@@ -27,7 +27,11 @@ services:
 
   cache:
     image: redis:7-alpine
-    ports: ["6379:6379"]
+    # Loopback, NOT 0.0.0.0. This was open to the internet answering PING and
+    # INFO unauthenticated, on the same host that serves idavoll.tech -- the
+    # standard path from there is CONFIG SET dir + SAVE to write an SSH key.
+    # Containers reach each other on the compose network regardless of this.
+    ports: ["127.0.0.1:6379:6379"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 2s
@@ -39,7 +43,9 @@ services:
     environment:
       MINIO_ROOT_USER: dev
       MINIO_ROOT_PASSWORD: devdevdev
-    ports: ["9000:9000", "9001:9001"]
+    # Loopback for the same reason. The console was reachable publicly and the
+    # root credentials here are dev/devdevdev.
+    ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]
     volumes: ["miniodata:/data"]
 
 volumes:
