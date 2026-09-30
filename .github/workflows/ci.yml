@@ -1,5 +1,11 @@
 name: CI
-on: [push, pull_request]
+on:
+  push:
+    # db-backups is machine output: a weekly commit of schema and curated rows
+    # from ops/backup-db.sh, with no code in it. Running the suite against it
+    # would burn several minutes a week to test a branch that has no source.
+    branches-ignore: [db-backups]
+  pull_request:
 
 # Action majors are kept current, not pinned to whatever worked first. Every
 # action here ran on Node 20, which GitHub deprecated: the runner forced them

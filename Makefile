@@ -74,6 +74,12 @@ psql:  ## open a psql shell
 backlog:  ## jobs by stage and state
 	cd $(BE) && .venv/bin/techtrend backlog
 
+backup:  ## full dump to disk + curated state to git (runs weekly on a timer)
+	ops/backup-db.sh
+
+backup-dry:  ## same, but commit locally without pushing
+	TT_BACKUP_NO_PUSH=1 ops/backup-db.sh
+
 # ------------------------------------------------------------------ checks
 
 test: test-backend test-clients  ## all tests

@@ -1,0 +1,16 @@
+[Unit]
+Description=TechTrend weekly database backup (full dump to disk, curated state to git)
+# Both tiers read Postgres through `docker exec`, so the container has to be
+# up. Docker is a system service and this is a user unit, so there is no
+# ordering edge that can be expressed here -- the script calls pg_isready and
+# exits nonzero if the database is not answering, which surfaces as a failed
+# unit in `systemctl --user status` rather than a silent empty backup.
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/TechTrend
+ExecStart=/opt/TechTrend/ops/backup-db.sh
+# The full dump of a 346 MB database takes about 100 seconds. The default
+# would not stop it, but a hung docker exec would hang forever without this.
+TimeoutStartSec=30min

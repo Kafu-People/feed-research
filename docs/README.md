@@ -39,6 +39,7 @@ Index with reading paths: [architecture/README.md](architecture/README.md).
 | --- | --- |
 | [11 Config](development/11-config.md) · [12 Testing](development/12-testing.md) · [13 Observability](development/13-observability.md) | [17 Milestones](development/17-milestones.md) |
 | [14 Local dev](development/14-local-dev.md) · [15 Deployment](development/15-deployment.md) · [16 Security](development/16-security-compliance.md) | |
+| [19 Backups](development/19-backups.md) | |
 
 Index: [development/README.md](development/README.md).
 

@@ -144,6 +144,7 @@ once.
 | # | Document | Covers |
 | --- | --- | --- |
 | 18 | [Research briefs](18-research-briefs.md) | The Gemini watchlist: `/techtrend`, the three cadences, cost caps, Slack app setup |
+| 19 | [Backups](19-backups.md) | Weekly timer, why the full dump cannot live in git, how to restore either tier |
 
 ---
 

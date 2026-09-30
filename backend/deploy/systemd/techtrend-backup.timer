@@ -1,0 +1,18 @@
+[Unit]
+Description=TechTrend weekly database backup (Sundays 04:00 America/Sao_Paulo)
+
+[Timer]
+# Sunday 04:00 local. Deliberately clear of everything else on this box: the
+# weekly report goes out Saturday 15:00 and the briefs run daily at 18:00, and
+# a 100-second full read of Postgres should not overlap either.
+OnCalendar=Sun *-*-* 04:00:00 America/Sao_Paulo
+# A backup that silently skips the week the box was rebooting is the backup
+# you discover missing during a restore. Same reason the report timer sets it.
+Persistent=true
+# Nothing else contends at 04:00, but if the machine wakes several timers at
+# once, spread them rather than having them fight over the disk.
+RandomizedDelaySec=5min
+Unit=techtrend-backup.service
+
+[Install]
+WantedBy=timers.target
