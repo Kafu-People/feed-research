@@ -101,7 +101,7 @@ async def run(job: queue.Job) -> None:
     # A one-off question. Not on the watchlist, never repeated, and rendered
     # under the asker's own words rather than a topic name.
     if ask := job.payload.get("ask"):
-        await _one(SlackClient(), "question", str(ask), heading=str(ask))
+        await _one(SlackClient(), "question", str(ask), heading=str(ask), tell=True)
         return
 
     cadence = str(job.payload.get("cadence") or "daily")
@@ -154,13 +154,33 @@ async def _one(
     *,
     heading: str | None = None,
     cadence: str = "daily",
+    tell: bool = False,
 ) -> int:
     """Research one topic and post it. Returns searches spent.
 
     A failure is this topic's failure: the next one still runs, and the
     unmarked `last_run_at` means a transient error retries tomorrow rather
     than silently dropping the beat.
+
+    `tell` is for a one-off question, where silence is the wrong answer. A
+    scheduled topic that fails is retried tomorrow and nobody is waiting on
+    it; a person who typed `/techtrend question` IS waiting, and got nothing
+    at all when the credits ran out -- the reason sat in the worker log while
+    the job was marked done. Every path below that returns without posting now
+    says why, the way `discuss._give_up` already did.
     """
+
+    async def give_up(why: str) -> None:
+        if not tell:
+            return
+        ch = settings().slack_brief_channel
+        if not ch:
+            return
+        try:
+            await client.post(ch, f"_{why}_", unfurl=False)
+        except Exception:  # noqa: BLE001 - the reason is already logged
+            telemetry.log.warning("brief.giveup_failed", name=name)
+
     s = settings()
     # The window goes AFTER the topic's own words, so it is the last thing the
     # model reads and cannot be buried by a long spec like the research one.
@@ -173,18 +193,25 @@ async def _one(
         # the topic its entire day, because every failure meant "skip".
         telemetry.log.warning("brief.transient", name=name)
         raise
-    except gemini.QuotaExceeded:
-        # Not retryable and not a rate limit -- it is what a project without
-        # billing returns for every grounded call. Hammering it would change
-        # nothing, so the whole run stops here.
-        telemetry.log.error("brief.quota", name=name)
+    except (gemini.QuotaExceeded, gemini.Depleted) as e:
+        # Neither is retryable and neither is a rate limit: one is a project
+        # with billing off, the other a project whose prepaid credits have run
+        # out. Hammering either changes nothing, so the whole run stops here
+        # rather than paying nothing and failing seven times.
+        telemetry.log.error("brief.billing", name=name, kind=type(e).__name__)
+        await give_up(
+            "I could not look that up: this project's Gemini credits are used up. "
+            "Top them up at ai.studio/projects and ask again."
+        )
         raise
     except Exception:  # noqa: BLE001 - one topic, not the watchlist
         telemetry.log.exception("brief.failed", name=name)
+        await give_up("That did not work. It has been logged.")
         return 0
 
     if not brief.text.strip():
         telemetry.log.info("brief.empty", name=name, searches=brief.searches)
+        await give_up("I could not find anything on that.")
         return brief.searches
 
     # THE gate. The model wrote this prose about pages nobody here read, so it
@@ -192,6 +219,7 @@ async def _one(
     # the crawled path, no exemption for being generated rather than fetched.
     if hit := blocked(searchable(brief.text, None, []), s.block_terms):
         telemetry.log.warning("brief.blocked", name=name, term=hit)
+        await give_up("I cannot answer that one.")
         return brief.searches
 
     sources = [src for src in brief.sources if not _banned_source(src)]

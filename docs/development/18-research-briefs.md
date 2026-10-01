@@ -28,7 +28,7 @@ it is not.
 ```
  /techtrend add <name> <prompt>     →  brief_topics row
                                           │
-         18:00 local, per cadence  ───────┤
+         09:00 local, per cadence  ───────┤
                                           ▼
                               Gemini + Google Search grounding
                                           │

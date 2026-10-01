@@ -801,3 +801,53 @@ def test_denied_escapes_the_per_story_catch() -> None:
     src = inspect.getsource(gemini_client.GeminiClient.summarize_batch)
     assert "gemini.Denied" in src
     assert "raise" in src
+
+
+@pytest.mark.asyncio
+async def test_a_depleted_project_tells_the_asker(monkeypatch: pytest.MonkeyPatch) -> None:
+    """402 is not a mystery, and a question that fails must say so.
+
+    Both halves of the bug this covers. A one-off question hit "prepayment
+    credits are depleted", the HTTPStatusError was swallowed as a generic
+    failure, the job was marked done, and the person who asked got silence --
+    so the only evidence was a traceback in the worker log.
+    """
+    from techtrend.ai.gemini import Depleted
+    from techtrend.platform.config import settings
+
+    async def broke(prompt: str) -> Brief:
+        raise Depleted("Your prepayment credits are depleted.")
+
+    settings.cache_clear()
+    spy = _wire(monkeypatch, "unused")
+    monkeypatch.setattr(brief_mod.gemini, "research", broke)
+    try:
+        with pytest.raises(Depleted):  # stops the run; it is not retryable
+            await brief_mod._one(spy, "question", "p", heading="p", tell=True)
+    finally:
+        settings.cache_clear()
+    assert len(spy.posts) == 1
+    assert "credits are used up" in spy.posts[0]
+
+
+@pytest.mark.asyncio
+async def test_a_scheduled_topic_fails_quietly(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The other side of `tell`: nobody is waiting on a scheduled topic.
+
+    It retries tomorrow on its own, so posting "that did not work" into the
+    channel every time Google hiccups would be noise standing in for a fix.
+    """
+    from techtrend.platform.config import settings
+
+    async def broke(prompt: str) -> Brief:
+        raise RuntimeError("boom")
+
+    settings.cache_clear()
+    spy = _wire(monkeypatch, "unused")
+    monkeypatch.setattr(brief_mod.gemini, "research", broke)
+    try:
+        spent = await brief_mod._one(spy, "upwork", "p")  # tell defaults to False
+    finally:
+        settings.cache_clear()
+    assert spy.posts == []
+    assert spent == 0

@@ -35,7 +35,7 @@ each one fires on its own schedule and none of them blocks the pipeline.
 | `notify` | per story | The older per-story card. Unused while `slack_delivery_mode=hourly` |
 | `summarize` | hourly | Summaries for cards that have none. Unused in hourly mode |
 | `digest` | 18:00 local | The day's roll-up |
-| `brief` | 18:00 local | The Gemini research watchlist — daily, plus weekly on Monday and monthly on the 1st |
+| `brief` | 09:00 local | The Gemini research watchlist — daily, plus weekly on Monday and monthly on the 1st |
 | `discuss` | on demand | Answers a question asked in a brief's thread |
 | `maintenance` | every 5 min | Reaps stale locks, purges done jobs |
 | `judge` | **off** | AI scoring. Not in the worker's stage list: ~17,000 pending jobs, and it costs per story |

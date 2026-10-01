@@ -106,6 +106,19 @@ class Denied(RuntimeError):
     """
 
 
+class Depleted(RuntimeError):
+    """HTTP 402 -- the prepaid credits are gone.
+
+    Its own type for the same reason `Denied` has one: retrying and falling
+    back to another model both change nothing, because the project cannot bill
+    at all. Seen 2026-10-01, and it cost a question to find out. A one-off
+    `/techtrend question` raised a bare HTTPStatusError, `_one` logged it as a
+    generic `brief.failed` with a traceback, the job was marked done, and the
+    person who asked got silence. The reason was in Google's response body the
+    whole time: "Your prepayment credits are depleted."
+    """
+
+
 class QuotaExceeded(RuntimeError):
     """HTTP 429.
 
@@ -195,6 +208,8 @@ async def write(system: str, user: str, *, model: str | None = None) -> tuple[st
             )
         except httpx.HTTPError as e:
             raise Transient(f"gemini unreachable: {e!r}") from e
+    if r.status_code == 402:
+        raise Depleted(r.text[:300])
     if r.status_code == 403:
         raise Denied(r.text[:300])
     if r.status_code == 429:
@@ -245,6 +260,11 @@ async def _ask(prompt: str, model: str) -> Brief:
             # A timeout on a two-minute grounded search is Google being slow,
             # not the request being wrong.
             raise Transient(f"gemini unreachable: {e!r}") from e
+    if r.status_code == 402:
+        # The same branch `_ask` grew, and for the sharper reason: an unnamed
+        # 402 here is how the hourly report posts headlines with nothing under
+        # them, which is the exact failure `Denied` was written about.
+        raise Depleted(r.text[:300])
     if r.status_code == 403:
         raise Denied(r.text[:300])
     if r.status_code == 429:
