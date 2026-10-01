@@ -215,23 +215,20 @@ async def test_ordinary_prose_is_posted(monkeypatch: pytest.MonkeyPatch) -> None
         await brief_mod._one(spy, "dataannotation", "prompt")
     finally:
         settings.cache_clear()
-    # Two messages: the thread parent, then ONE reply. This fixture's answer
-    # carries no marker, so there is no tables half to post under it.
-    assert len(spy.posts) == 2
-    assert spy.threads[0] is None  # the parent itself is top level
-    assert spy.threads[1] == "1.0"  # the reading hangs off it
+    # One post: this fixture's answer carries no marker, so there is no
+    # tables half to post.
+    assert len(spy.posts) == 1
 
 
 @pytest.mark.asyncio
 async def test_both_readings_are_posted(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The operator's shape: a dated parent, then the write-up AND the same
-    findings as tables, as two replies in its thread.
+    """The operator's shape: the write-up AND the same findings as tables,
+    as two ordinary posts.
 
-    Both halves, for the reason there have always been two: understanding
-    wants paragraphs, deciding wants a grid, and one research call produces
-    each, so nobody has to choose. They sit in a thread so that each run gets
-    its own division in the channel -- today's brief and yesterday's are two
-    threads, not four loose messages to be dated by scrolling.
+    They answer different questions -- understanding wants paragraphs,
+    deciding wants a grid -- and one research call produces both, so nobody
+    has to choose and the second post is free. Not a thread: a thread hides
+    the tables behind a click, and the tables are usually the point.
     """
     from techtrend.ai.gemini import TABLES_MARKER
     from techtrend.platform.config import settings
@@ -243,43 +240,9 @@ async def test_both_readings_are_posted(monkeypatch: pytest.MonkeyPatch) -> None
         await brief_mod._one(spy, "dataannotation", "prompt")
     finally:
         settings.cache_clear()
-    assert len(spy.posts) == 3  # parent + two readings
-    assert spy.threads[0] is None  # parent at top level
-    assert spy.threads[1:] == ["1.0", "1.0"]  # both halves in its thread
+    assert len(spy.posts) == 2
+    assert all(t is None for t in spy.threads)  # both top level, no thread
     assert "tables" in spy.posts[-1]
-
-
-@pytest.mark.asyncio
-async def test_a_failed_parent_still_posts_the_brief(monkeypatch: pytest.MonkeyPatch) -> None:
-    """If the thread opener cannot be posted, the halves go out flat.
-
-    The research is already paid for by this point. Losing it because a
-    cosmetic parent message failed would be the expensive half of the trade,
-    so the thread is a preference and posting at all is the requirement.
-    """
-    from techtrend.ai.gemini import TABLES_MARKER
-    from techtrend.platform.config import settings
-
-    text = f"Rates fell this week.\n{TABLES_MARKER}\n| Platform | Pay |\n| --- | --- |"
-    settings.cache_clear()
-    spy = _wire(monkeypatch, text)
-
-    first = {"n": 0}
-    real_post = spy.post
-
-    async def flaky(channel, text_, blocks=None, thread_ts=None, unfurl=True):
-        first["n"] += 1
-        if first["n"] == 1:  # the parent, and only the parent
-            raise RuntimeError("slack said no")
-        return await real_post(channel, text_, blocks, thread_ts, unfurl)
-
-    spy.post = flaky  # type: ignore[method-assign]
-    try:
-        await brief_mod._one(spy, "dataannotation", "prompt")
-    finally:
-        settings.cache_clear()
-    assert len(spy.posts) == 2  # both halves, no parent
-    assert all(t is None for t in spy.threads)  # flat, because there is no thread
 
 
 def test_a_brief_without_the_marker_still_posts() -> None:

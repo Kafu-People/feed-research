@@ -18,7 +18,6 @@ import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlsplit
-from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
 
@@ -362,39 +361,20 @@ async def _post_both(
     brief: gemini.Brief,
     sources: list[Any],
 ) -> list[Block]:
-    """ONE THREAD per brief: a parent that names it, the content as replies.
+    """Two posts: the write-up, then the same findings as tables.
 
-    The channel becomes a dated index -- one line per topic per run -- and the
-    reading sits underneath. That is what gives each day its own division:
-    today's `upwork` and yesterday's are two threads, not four loose messages
-    a reader has to date by scrolling.
-
-    Still both halves, for the reason they were always both: understanding
-    wants paragraphs, deciding wants a grid, and one research call produces
-    each. They are now the first two replies instead of two top-level posts.
-
-    Discussion lands in the same thread, which is why `discuss.py` needs no
-    change -- it reads the whole thread for context, so the analysis and the
-    tables are now part of what it sees when someone asks a follow-up.
+    Both, not one. They answer different questions -- understanding wants
+    paragraphs, deciding wants a grid -- and one research call produces both
+    halves, so the second post is free. Separate messages rather than a
+    thread, because a thread hides the tables behind a click and the tables
+    are usually what someone came for.
     """
     analysis, tables = brief.parts
     posted: list[Block] = []
-    # Sources ride on the LAST reply only: repeating a 17-link source line
+    # Sources ride on the LAST post only: repeating a 17-link source line
     # twice says nothing the first one did not.
     halves = [(analysis, label), (tables, "tables")]
     present = [(body, lbl) for body, lbl in halves if body.strip()]
-
-    parent_text, parent_blocks = _parent(title, label, brief, len(sources))
-    thread_ts: str | None = None
-    try:
-        thread_ts = await client.post(channel, parent_text, blocks=parent_blocks, unfurl=False)
-        posted += parent_blocks
-    except Exception:  # noqa: BLE001 - fall back to flat posts, never lose the brief
-        # A failed parent must not cost the research. Without a thread to
-        # reply into, the halves go out at top level exactly as they used to:
-        # worse layout beats a brief that was paid for and never posted.
-        telemetry.log.exception("brief.parent_failed", name=title)
-
     for i, (body, lbl) in enumerate(present):
         fallback, blocks = _render(
             title,
@@ -402,83 +382,29 @@ async def _post_both(
             sources if i == len(present) - 1 else [],
             brief.searches,
             label=lbl,
-            # Threaded replies drop the 150-character header: the parent two
-            # lines up already carries it, and repeating it per reply reads
-            # as three copies of the same title.
-            threaded=thread_ts is not None,
         )
         try:
             # unfurl off: a dozen source links would bury the brief itself.
-            await client.post(channel, fallback, blocks=blocks, thread_ts=thread_ts, unfurl=False)
+            await client.post(channel, fallback, blocks=blocks, unfurl=False)
             posted += blocks
         except Exception:  # noqa: BLE001 - one half, never the brief
             telemetry.log.exception("brief.half_failed", half=lbl)
-    telemetry.log.info(
-        "brief.posted_both",
-        analysis_chars=len(analysis),
-        table_chars=len(tables),
-        threaded=thread_ts is not None,
-    )
+    telemetry.log.info("brief.posted_both", analysis_chars=len(analysis), table_chars=len(tables))
     return posted
 
 
-def _parent(
-    title: str, label: str | None, brief: gemini.Brief, n_sources: int
-) -> tuple[str, list[Block]]:
-    """The thread opener: what this is, and which day it is for.
-
-    The date is the whole point. A topic posts on a cadence, so without a
-    dated parent the channel is a column of identical titles and the only way
-    to tell today's `upwork` from Tuesday's is to hover a timestamp. It is
-    rendered in `digest_timezone`, not UTC: a run at 18:00 local is 21:00 UTC
-    the same day, but a manual run late in the evening is the NEXT day in UTC
-    and would be filed under tomorrow.
-    """
-    suffix = f" — {label}" if label else ""
-    heading = title if len(title) > 40 else f"{title}{suffix}"
-    heading = heading[:147] + "…" if len(heading) > 150 else heading
-    now = datetime.now(UTC).astimezone(ZoneInfo(settings().digest_timezone))
-    # Built by hand rather than with %-d, which is a glibc extension and not
-    # portable.
-    when = f"{now:%A} {now.day} {now:%B %Y}"
-    return heading, [
-        {"type": "header", "text": {"type": "plain_text", "text": heading, "emoji": True}},
-        {
-            "type": "context",
-            "elements": [
-                {
-                    "type": "mrkdwn",
-                    "text": f"*{when}* · {brief.searches} searches · {n_sources} sources"
-                    " · _the reading is in this thread_",
-                }
-            ],
-        },
-    ]
-
-
 def _render(
-    name: str,
-    body: str,
-    sources: list[Any],
-    searches: int,
-    *,
-    label: str | None = None,
-    threaded: bool = False,
+    name: str, body: str, sources: list[Any], searches: int, *, label: str | None = None
 ) -> tuple[str, list[Block]]:
     # Slack header blocks are plain_text and cap at 150 characters; a pasted
     # question can be longer than that and would be rejected outright.
     suffix = f" — {label}" if label else ""
     heading = name if len(name) > 40 else f"{name}{suffix}"
     heading = heading[:147] + "…" if len(heading) > 150 else heading
-    # In a thread the parent carries the title. A reply gets a one-word bold
-    # line naming which half it is, which separates the two replies without
-    # repeating a title the reader is already looking at.
-    top: Block = (
-        {"type": "section", "text": {"type": "mrkdwn", "text": f"*{(label or 'brief').title()}*"}}
-        if threaded
-        else {"type": "header", "text": {"type": "plain_text", "text": heading, "emoji": True}}
-    )
-    blocks: list[Block] = [top, *_body_blocks(to_slack_report(body))]
+    blocks: list[Block] = [
+        {"type": "header", "text": {"type": "plain_text", "text": heading, "emoji": True}},
+        *_body_blocks(to_slack_report(body)),
+    ]
     if sources:
         blocks.append({"type": "divider"})
         blocks.append(
