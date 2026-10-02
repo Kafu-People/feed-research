@@ -29,14 +29,17 @@
 
 set -euo pipefail
 
-REPO=/opt/TechTrend
+# The repo this script lives in, derived rather than hardcoded so a host
+# installed anywhere else backs itself up correctly. Override only to back
+# up a checkout other than this one.
+REPO=${TT_REPO:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}
 CONTAINER=techtrend-db-1
 DB=techtrend
 ARCHIVE=${TT_BACKUP_DIR:-$HOME/.local/state/techtrend/backups}
 KEEP=${TT_BACKUP_KEEP:-8}
 BRANCH=db-backups
 # Its own clone, NOT the live checkout. This runs unattended at 04:00 and the
-# working tree at /opt/TechTrend may have uncommitted work in it -- two Claude
+# working tree at $REPO may have uncommitted work in it -- two Claude
 # sessions have edited this repo concurrently before. A backup job must never
 # be the reason someone's in-progress edit was stashed or rebased.
 WORK=${TT_BACKUP_WORK:-$HOME/.local/state/techtrend/backup-repo}
