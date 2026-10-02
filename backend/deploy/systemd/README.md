@@ -9,6 +9,9 @@ hand, so a rebuilt host would have deployed the code and silently not run it.
 
 ## Install
 
+The paths in these files are this host's: `/opt/TechTrend`, and one
+operator's pnpm. On this host, copy them straight in:
+
     mkdir -p ~/.config/systemd/user
     cp deploy/systemd/*.service deploy/systemd/*.timer ~/.config/systemd/user/
     systemctl --user daemon-reload
@@ -16,6 +19,20 @@ hand, so a rebuilt host would have deployed the code and silently not run it.
                                  techtrend-slackbot
     systemctl --user enable --now techtrend-backup.timer
     loginctl enable-linger "$USER"    # survive logout
+
+**On any other host, or any other install path,** use the installer instead
+-- it rewrites those paths from where the repo actually is, and refuses to
+write units that point at a missing venv, a missing `.env`, an unbuilt web
+app or an `.env` still carrying `TT_AI_FAKE=true`:
+
+    deploy/install.sh --dry-run       # print the units it would write
+    deploy/install.sh --enable        # write them, reload, enable, enable-linger
+
+It generates from the files in this directory rather than keeping a second,
+parameterized copy of them -- a duplicate set is how the `--stage` list came
+to be untracked in the first place. A unit added here with a path prefix the
+installer does not know makes it fail loudly, instead of installing something
+that points at `/opt`.
 
 ## After changing a unit here
 
@@ -41,3 +58,10 @@ hand, so a rebuilt host would have deployed the code and silently not run it.
   this directory. Same exposure this README was written about: a rebuilt host
   would not file the weekly report and nothing would say so.
 - Secrets are not here. Every service reads `backend/.env`, which is gitignored.
+  Start from [`backend/.env.prod.example`](../../.env.prod.example): it marks
+  what is required, and lists the settings that fail *quietly* -- a missing
+  `TT_SLACK_CHANNEL` enqueues no notify job and logs nothing.
+- `techtrend-web` additionally needs `clients/apps/web/.env.production` (see
+  the `.example` beside it). `NEXT_PUBLIC_API_URL` is compiled into the
+  bundle at build time, so it must be set **before** `make build-web` --
+  setting it afterwards and restarting the unit changes nothing.
