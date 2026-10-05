@@ -63,6 +63,18 @@ problems=()
   || problems+=("no backend/.env -- copy backend/.env.prod.example and fill it in")
 [[ -x $TT_ROOT/ops/backup-db.sh ]] \
   || problems+=("ops/backup-db.sh is not executable -- run: chmod +x ops/backup-db.sh")
+# fastembed is a LAZY import and a DELIBERATE non-dependency (pyproject.toml):
+# the embedder is swappable and CI never runs it. So installing the project does
+# not bring it, and a host without it collects articles happily and then fails
+# the read stage on EVERY one of them -- no article rows, and nothing upstream
+# saying why. Checked here because that is indistinguishable from a working
+# deploy until someone reads the worker log.
+venv_py=$TT_ROOT/backend/.venv/bin/python
+if [[ -x $venv_py ]]; then
+  if ! "$venv_py" -c 'import fastembed' >/dev/null 2>&1; then
+    problems+=("fastembed missing from the venv -- the read stage fails on every article. Run: backend/.venv/bin/uv pip install fastembed")
+  fi
+fi
 if [[ -z $PNPM_BIN ]]; then
   problems+=("pnpm not on PATH -- set PNPM_BIN=/path/to/pnpm (techtrend-web needs it)")
 elif [[ ! -x $PNPM_BIN ]]; then

@@ -18,6 +18,9 @@ node_modules/
 .env
 .env.local
 .env.*.local
+# A backup of a filled-in .env carries live tokens. Committing one is
+# permanent even in a private repo, so the pattern is ignored, not the habit.
+.env.bak*
 
 # --- build / os ---------------------------------------------------------
 dist/
