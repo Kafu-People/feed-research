@@ -1,0 +1,5 @@
+# core.autocrlf=true on a Windows checkout rewrites shell scripts to CRLF, and
+# bash in WSL then fails on $'\r': command not found. ops/wsl-start.sh is RUN FROM
+# this working tree by the TechTrend scheduled task, so its line endings are
+# not cosmetic -- CRLF makes it unrunnable on the only host that runs it.
+*.sh text eol=lf
