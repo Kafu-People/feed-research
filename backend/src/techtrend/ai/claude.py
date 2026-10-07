@@ -91,9 +91,13 @@ class ClaudeClient:
         # Credentials resolve from the environment (ANTHROPIC_API_KEY, or an
         # `ant auth login` profile). Never hardcode a key. Settings also loads
         # ANTHROPIC_API_KEY from .env so local dev works without an export.
-        key = settings().anthropic_api_key
+        s = settings()
+        key = s.anthropic_api_key
         self._c = anthropic.AsyncAnthropic(
-            api_key=key.get_secret_value() if key else None, max_retries=3, timeout=120.0
+            api_key=key.get_secret_value() if key else None,
+            base_url=s.anthropic_base_url,  # None -> SDK default / ANTHROPIC_BASE_URL
+            max_retries=3,
+            timeout=120.0,
         )
 
     async def judge(self, title: str, body: str, **kw: object) -> JudgeResult:

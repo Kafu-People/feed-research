@@ -29,7 +29,11 @@ import httpx
 from techtrend.platform.config import settings
 from techtrend.platform.telemetry import log
 
-_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+_ENDPOINT = "{base}/v1beta/models/{model}:generateContent"
+
+
+def _url(model: str) -> str:
+    return _ENDPOINT.format(base=settings().gemini_base_url.rstrip("/"), model=model)
 
 # The house style, same rule as the Anthropic prompts in ai/prompts/. Without
 # it a brief is written in the register of the pages it read -- forum slang and
@@ -195,7 +199,7 @@ async def write(system: str, user: str, *, model: str | None = None) -> tuple[st
         "contents": [{"parts": [{"text": user}]}],
         "systemInstruction": {"parts": [{"text": system}]},
     }
-    url = _ENDPOINT.format(model=model or s.gemini_model)
+    url = _url(model or s.gemini_model)
     async with httpx.AsyncClient(timeout=s.gemini_timeout_s) as c:
         try:
             r = await c.post(
@@ -245,7 +249,7 @@ async def _ask(prompt: str, model: str) -> Brief:
         # worse than no answer -- it is a confident one about last year.
         "tools": [{"google_search": {}}],
     }
-    url = _ENDPOINT.format(model=model)
+    url = _url(model)
     async with httpx.AsyncClient(timeout=s.gemini_timeout_s) as c:
         try:
             r = await c.post(

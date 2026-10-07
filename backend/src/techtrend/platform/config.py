@@ -139,6 +139,10 @@ class Settings(BaseSettings):
     # Not TT_-prefixed: same var the Anthropic SDK reads from the process
     # env. Loading it here too makes `.env` sufficient in local dev.
     anthropic_api_key: SecretStr | None = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
+    # Set to the shared AI gateway (../ai-gateway) so the real key lives there
+    # and ANTHROPIC_API_KEY holds this project's gateway token instead. Unset =
+    # api.anthropic.com. Same unprefixed name the SDK reads, for the same reason.
+    anthropic_base_url: str | None = Field(default=None, validation_alias="ANTHROPIC_BASE_URL")
     # Every stage runs on Haiku 4.5 by user decision (2026-09-02). Each model
     # setting is still separate, so one stage can be promoted without moving
     # the rest -- `_effort_kwargs` and `_max_tokens` in ai/claude.py absorb
@@ -299,6 +303,10 @@ class Settings(BaseSettings):
     # Read as GEMINI_API_KEY too, because that is the name Google's own
     # libraries and docs use and an operator will set that one by reflex.
     gemini_api_key: SecretStr | None = Field(default=None, validation_alias="GEMINI_API_KEY")
+    # Where generateContent is sent. Point at the AI gateway's /gemini route
+    # (TT_GEMINI_BASE_URL=http://127.0.0.1:8090/gemini) and GEMINI_API_KEY
+    # becomes this project's gateway token. The request is unchanged either way.
+    gemini_base_url: str = "https://generativelanguage.googleapis.com"
     # gemini-2.5-* returns 404 for new projects as of 2026-09-22; Google's own
     # error names these as the replacements.
     # The RESEARCH model. Priced 2026-09-23, per million tokens:
