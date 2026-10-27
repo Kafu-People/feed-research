@@ -22,7 +22,7 @@ API = "https://slack.com/api/chat.postMessage"
 @pytest.fixture(autouse=True)
 def _configured(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("TT_SLACK_BOT_TOKEN", "xoxb-test")
-    monkeypatch.setenv("TT_SLACK_CHANNEL", "#tech-updates")
+    monkeypatch.setenv("TT_SLACK_CHANNEL", "C0TESTCHAN1")
     settings.cache_clear()
     yield
     settings.cache_clear()
@@ -114,7 +114,7 @@ def test_followup_names_the_new_source_count() -> None:
 @pytest.mark.asyncio
 async def test_unfurling_is_enabled_so_slack_renders_the_preview() -> None:
     route = respx.post(API).mock(return_value=httpx.Response(200, json={"ok": True, "ts": "1"}))
-    await SlackClient().post("#c", "hi")
+    await SlackClient().post("C0TESTCHAN1", "hi")
     body = json.loads(route.calls.last.request.read())
     assert body["unfurl_links"] is True
     assert body["unfurl_media"] is True
@@ -126,7 +126,7 @@ async def test_unfurling_can_be_switched_off_per_message() -> None:
     """The digest links to Slack permalinks, and Slack expands those into
     quoted copies of the linked message -- which would bury the digest."""
     route = respx.post(API).mock(return_value=httpx.Response(200, json={"ok": True, "ts": "1"}))
-    await SlackClient().post("#c", "hi", unfurl=False)
+    await SlackClient().post("C0TESTCHAN1", "hi", unfurl=False)
     body = json.loads(route.calls.last.request.read())
     assert body["unfurl_links"] is False
     assert body["unfurl_media"] is False
@@ -136,14 +136,14 @@ async def test_unfurling_can_be_switched_off_per_message() -> None:
 @pytest.mark.asyncio
 async def test_post_returns_ts_on_success() -> None:
     respx.post(API).mock(return_value=httpx.Response(200, json={"ok": True, "ts": "17.99"}))
-    assert await SlackClient().post("#c", "hi") == "17.99"
+    assert await SlackClient().post("C0TESTCHAN1", "hi") == "17.99"
 
 
 @respx.mock
 @pytest.mark.asyncio
 async def test_thread_ts_is_forwarded_for_followups() -> None:
     route = respx.post(API).mock(return_value=httpx.Response(200, json={"ok": True, "ts": "2"}))
-    await SlackClient().post("#c", "more", thread_ts="1")
+    await SlackClient().post("C0TESTCHAN1", "more", thread_ts="1")
     body = json.loads(route.calls.last.request.read())
     assert body["thread_ts"] == "1"
     assert "blocks" not in body  # a follow-up is plain text in-thread
@@ -156,7 +156,7 @@ async def test_bad_config_is_fatal_not_retried() -> None:
         return_value=httpx.Response(200, json={"ok": False, "error": "channel_not_found"})
     )
     with pytest.raises(queue.FatalError):
-        await SlackClient().post("#c", "hi")
+        await SlackClient().post("C0TESTCHAN1", "hi")
 
 
 @respx.mock
@@ -166,7 +166,7 @@ async def test_rate_limit_is_retryable() -> None:
         return_value=httpx.Response(200, json={"ok": False, "error": "ratelimited"})
     )
     with pytest.raises(queue.RetryableError):
-        await SlackClient().post("#c", "hi")
+        await SlackClient().post("C0TESTCHAN1", "hi")
 
 
 @respx.mock
@@ -174,7 +174,7 @@ async def test_rate_limit_is_retryable() -> None:
 async def test_network_failure_is_retryable() -> None:
     respx.post(API).mock(side_effect=httpx.ConnectError("boom"))
     with pytest.raises(queue.RetryableError):
-        await SlackClient().post("#c", "hi")
+        await SlackClient().post("C0TESTCHAN1", "hi")
 
 
 @pytest.mark.asyncio

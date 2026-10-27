@@ -249,3 +249,28 @@ def test_the_defaults_already_satisfy_the_ban() -> None:
     s = Settings()
     for field in AI_MODEL_FIELDS:
         assert "haiku" in getattr(s, field).lower(), field
+
+
+# ------------------------------------- Slack channels are IDs (2026-10-27)
+#
+# Posting by "#name" worked until the channels were renamed on 2026-10-26, then
+# every hourly report dead-lettered as channel_not_found. IDs survive renames.
+
+
+@pytest.mark.parametrize("field", ["slack_channel", "slack_brief_channel"])
+@pytest.mark.parametrize("name", ["#techtrend-ai", "techtrend-ai", "#C0BRFA7T2HZ", "c0brfa7t2hz"])
+def test_a_channel_name_is_refused_at_boot(field: str, name: str) -> None:
+    with pytest.raises(Exception, match="not a Slack channel ID"):
+        Settings(**{field: name}, _env_file=None)
+
+
+@pytest.mark.parametrize("field", ["slack_channel", "slack_brief_channel"])
+@pytest.mark.parametrize("cid", ["C0BRFA7T2HZ", "G01ABCDEFGH", " C0C3QGJ1AQ6 "])
+def test_a_channel_id_is_accepted(field: str, cid: str) -> None:
+    assert getattr(Settings(**{field: cid}, _env_file=None), field) == cid.strip()
+
+
+@pytest.mark.parametrize("field", ["slack_channel", "slack_brief_channel"])
+def test_a_blank_channel_means_unset(field: str) -> None:
+    """Unset is a supported state (delivery off), not an error."""
+    assert getattr(Settings(**{field: ""}, _env_file=None), field) is None

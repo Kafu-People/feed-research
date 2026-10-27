@@ -22,7 +22,7 @@ def _on(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
 
     class _S:
         gemini_api_key = "k"
-        slack_brief_channel = "#briefs"
+        slack_brief_channel = "C0BRIEFS001"
         brief_discuss_enabled = True
 
     monkeypatch.setattr(discuss, "settings", lambda: _S())
@@ -103,7 +103,7 @@ async def test_it_is_off_until_switched_on(monkeypatch: pytest.MonkeyPatch) -> N
 
     class _S:
         gemini_api_key = "k"
-        slack_brief_channel = "#briefs"
+        slack_brief_channel = "C0BRIEFS001"
         brief_discuss_enabled = False
 
     monkeypatch.setattr(discuss, "settings", lambda: _S())

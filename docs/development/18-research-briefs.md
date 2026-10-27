@@ -105,7 +105,7 @@ billing every grounded call returns 429 while plain generation on the same key s
 
 ```bash
 GEMINI_API_KEY=...
-TT_SLACK_BRIEF_CHANNEL=#techtrend-briefs
+TT_SLACK_BRIEF_CHANNEL=C0XXXXXXXXX   # channel ID from the channel's About panel, not #name
 ```
 
 ### 2. Slack app

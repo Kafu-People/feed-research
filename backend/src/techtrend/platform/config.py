@@ -6,13 +6,18 @@ first request that needs it.
 
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
+
+# Slack conversation IDs: C (channels, incl. new private ones) or G (legacy
+# private channels), then uppercase alphanumerics.
+_CHANNEL_ID_RE = re.compile(r"[CG][A-Z0-9]{8,}")
 
 # Never delivered, on any surface. A module constant rather than an inline
 # default so tests and the cleanup tooling can import the same list.
@@ -216,7 +221,11 @@ class Settings(BaseSettings):
     # Bot token (xoxb-, scope chat:write) + the channel it posts into. Both
     # unset = the notify stage is inert and nothing is ever enqueued.
     slack_bot_token: SecretStr | None = None
-    slack_channel: str | None = None  # "#tech-updates" or a channel id
+    # A channel ID (C0..., G0... for older private channels), never "#name".
+    # Names are what people change: on 2026-10-26 a rename turned every
+    # hourly post into channel_not_found. Copy the ID from the channel's
+    # "About" panel in Slack. See _slack_channels_are_ids.
+    slack_channel: str | None = None
     # Which topics reach Slack. EMPTY MEANS EVERY TOPIC -- narrow it in .env
     # (TT_SLACK_TOPIC_IDS='[1,3,13]'), widen it by removing the var.
     slack_topic_ids: list[int] = Field(default_factory=list)
@@ -330,6 +339,7 @@ class Settings(BaseSettings):
     gemini_timeout_s: float = 180.0
     # Where briefs go. Deliberately NOT slack_channel: a research brief is a
     # different thing from the hourly report and should not compete with it.
+    # An ID, like slack_channel; `/techtrend` is only accepted in this channel.
     slack_brief_channel: str | None = None
     # Local hour (digest_timezone) at which the day's briefs run.
     brief_hour: int = Field(default=8, ge=0, le=23)
@@ -450,6 +460,25 @@ class Settings(BaseSettings):
     jwt_secret: SecretStr = SecretStr("dev-secret")
     access_token_ttl_s: int = 900
     refresh_token_ttl_s: int = 90 * 24 * 3600
+
+    @field_validator("slack_channel", "slack_brief_channel")
+    @classmethod
+    def _slack_channels_are_ids(cls, v: str | None) -> str | None:
+        """Refuse a channel NAME at boot rather than at the first post.
+
+        A name keeps working until someone renames the channel, then every post
+        dead-letters as channel_not_found and the channel just goes quiet --
+        which is exactly what happened on 2026-10-26. An ID survives renames.
+        """
+        if v is None or not v.strip():
+            return None
+        v = v.strip()
+        if not _CHANNEL_ID_RE.fullmatch(v):
+            raise ValueError(
+                f"{v!r} is not a Slack channel ID. Use the ID (e.g. C0BRFA7T2HZ) "
+                "from the channel's About panel, not its #name."
+            )
+        return v
 
     @model_validator(mode="after")
     def _require_haiku_summaries_and_no_opus(self) -> Settings:

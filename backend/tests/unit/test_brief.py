@@ -120,7 +120,12 @@ def test_topic_names_are_one_safe_word(name: str, ok: bool) -> None:
 
 @pytest.mark.parametrize(
     ("key", "channel", "on"),
-    [(None, None, False), ("k", None, False), (None, "#c", False), ("k", "#c", True)],
+    [
+        (None, None, False),
+        ("k", None, False),
+        (None, "C0BRIEFS001", False),
+        ("k", "C0BRIEFS001", True),
+    ],
 )
 def test_brief_needs_both_halves(
     monkeypatch: pytest.MonkeyPatch, key: str | None, channel: str | None, on: bool
@@ -180,7 +185,7 @@ def _wire(monkeypatch: pytest.MonkeyPatch, text_: str) -> _Spy:
     monkeypatch.setattr(brief_mod.gemini, "research", fake_research)
     monkeypatch.setattr(brief_mod, "SlackClient", lambda: spy)
     monkeypatch.setattr(brief_mod, "session_scope", fake_scope)
-    monkeypatch.setenv("TT_SLACK_BRIEF_CHANNEL", "#briefs")
+    monkeypatch.setenv("TT_SLACK_BRIEF_CHANNEL", "C0BRIEFS001")
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     return spy
 
@@ -294,26 +299,31 @@ def test_sources_are_grouped_by_publisher() -> None:
 
 
 @pytest.mark.parametrize(
-    ("channel", "allowed"),
+    ("channel_id", "channel_name", "allowed"),
     [
-        ("techtrend-briefs", True),
-        ("techtrend-ai", False),
-        ("directmessage", False),
-        ("random", False),
+        ("C0BRIEFS001", "feed-research-briefs", True),
+        # Renamed: same id, new name -- still home. The 2026-10-26 failure.
+        ("C0BRIEFS001", "anything-else", True),
+        ("C0HOURLY001", "feed-ai-news", False),
+        ("D0DIRECT001", "directmessage", False),
+        # Another channel that happens to carry the old name is NOT home.
+        ("C0RANDOM001", "C0BRIEFS001", False),
     ],
 )
 def test_command_only_works_in_its_home_channel(
-    monkeypatch: pytest.MonkeyPatch, channel: str, allowed: bool
+    monkeypatch: pytest.MonkeyPatch, channel_id: str, channel_name: str, allowed: bool
 ) -> None:
     """Slack offers a slash command in EVERY channel the moment it exists.
-    Without this the watchlist is editable from anywhere, including DMs."""
+    Without this the watchlist is editable from anywhere, including DMs.
+    Matched on ID, so renaming the channel does not lock the command out."""
     from techtrend.deliver import commands
 
     class _S:
-        slack_brief_channel = "#techtrend-briefs"
+        slack_brief_channel = "C0BRIEFS001"
 
     monkeypatch.setattr(commands, "settings", lambda: _S())
-    assert (commands._wrong_channel({"channel_name": channel}) is None) is allowed
+    payload = {"channel_id": channel_id, "channel_name": channel_name}
+    assert (commands._wrong_channel(payload) is None) is allowed
 
 
 def test_command_is_not_refused_everywhere_when_unconfigured(
@@ -326,7 +336,7 @@ def test_command_is_not_refused_everywhere_when_unconfigured(
         slack_brief_channel = None
 
     monkeypatch.setattr(commands, "settings", lambda: _S())
-    assert commands._wrong_channel({"channel_name": "anywhere"}) is None
+    assert commands._wrong_channel({"channel_id": "C0ANYWHERE1"}) is None
 
 
 # ------------------------------------------------ edit, question, styling

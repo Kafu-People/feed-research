@@ -147,15 +147,14 @@ def _wrong_channel(payload: dict[str, Any]) -> str | None:
     one channel -- the one its briefs post to -- and the command should say so
     rather than quietly working everywhere.
 
-    Matched on name, because that is what the operator configures; Slack sends
-    both the id and the name with every command.
+    Matched on ID, never name: a renamed channel keeps its ID, and matching on
+    name is what broke delivery on 2026-10-26. Returns the home channel's ID.
     """
-    home = (settings().slack_brief_channel or "").lstrip("#").strip()
+    home = settings().slack_brief_channel
     if not home:
         return None  # unconfigured: refusing everywhere would be worse
-    here = str(payload.get("channel_name") or "").lstrip("#").strip()
-    # A DM reports as `directmessage`, which is never the home channel.
-    return None if here == home else home
+    # A DM has its own D... id, which is never the home channel.
+    return None if payload.get("channel_id") == home else home
 
 
 async def handle(payload: dict[str, Any]) -> None:
@@ -165,12 +164,13 @@ async def handle(payload: dict[str, Any]) -> None:
     response_url = str(payload.get("response_url") or "")
 
     if home := _wrong_channel(payload):
-        telemetry.log.info("command.wrong_channel", channel=payload.get("channel_name"))
+        telemetry.log.info("command.wrong_channel", channel=payload.get("channel_id"))
+        # <#ID> is Slack's channel mention: it renders as the CURRENT name.
         await _respond(
             response_url,
-            f"Use /techtrend in #{home}",
+            f"Use /techtrend in <#{home}>",
             _blocks(
-                title=f"`/techtrend` lives in #{home}",
+                title=f"`/techtrend` lives in <#{home}>",
                 body="Join that channel and run it there.",
             ),
         )
