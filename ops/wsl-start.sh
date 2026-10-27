@@ -17,6 +17,17 @@
 
 set -uo pipefail
 
+# The scheduled task runs this as root (`wsl -u root`): without systemd nothing
+# recreates /var/run/postgresql after a reboot, and pg_ctlcluster fails with
+# "No such file or directory" unless it exists. Long-running processes still
+# drop to the normal user so file ownership does not change.
+APP_USER=administrator
+AS_APP=()
+if [[ $(id -u) -eq 0 ]]; then
+  install -d -o postgres -g postgres -m 2775 /var/run/postgresql
+  AS_APP=(runuser -u "$APP_USER" --)
+fi
+
 REPO=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 ENVF=$REPO/backend/.env
 PGPORT_TT=5433
@@ -57,7 +68,7 @@ fi
 if redis-cli ping >/dev/null 2>&1; then
   log "redis already up"
 else
-  redis-server --daemonize yes && log "redis started" || log "redis FAILED to start"
+  "${AS_APP[@]}" redis-server --daemonize yes && log "redis started" || log "redis FAILED to start"
 fi
 
 # --- minio ------------------------------------------------------------------
@@ -76,6 +87,7 @@ else
   else
     export MINIO_ROOT_USER MINIO_ROOT_PASSWORD
     mkdir -p /var/lib/minio/data
+    # Stays root: /var/lib/minio/data has always been root-owned.
     setsid nohup minio server /var/lib/minio/data \
       --address 127.0.0.1:9000 --console-address 127.0.0.1:9001 \
       >/var/log/minio.log 2>&1 </dev/null &
@@ -104,7 +116,7 @@ start_worker() {
     return
   fi
   cd "$REPO/backend" || return 1
-  setsid nohup .venv/bin/techtrend worker --stage "$stages" --concurrency "$conc"     >>"$logf" 2>&1 </dev/null &
+  setsid nohup "${AS_APP[@]}" .venv/bin/techtrend worker --stage "$stages" --concurrency "$conc"     >>"$logf" 2>&1 </dev/null &
   sleep 5
   if pgrep -f "techtrend worker --stage $stages" >/dev/null; then
     log "$name worker started"
