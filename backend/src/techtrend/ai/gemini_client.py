@@ -17,6 +17,7 @@ THAT article, not the web's view of its subject.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 
 from techtrend.ai import gemini
 from techtrend.ai.claude import (
@@ -29,6 +30,10 @@ from techtrend.ai.claude import (
 from techtrend.ai.schemas import JudgeResult, TopicDraft
 from techtrend.platform.config import settings
 from techtrend.platform.telemetry import AI_TOKENS, log
+
+# Gemini as a whole is unavailable, not this one request. Retrying changes
+# nothing, so the writing falls back to Claude rather than going missing.
+_GEMINI_DOWN = (gemini.NotConfigured, gemini.Denied, gemini.Depleted, gemini.QuotaExceeded)
 
 
 class GeminiClient:
@@ -55,7 +60,12 @@ class GeminiClient:
     # ---- written by Gemini ----------------------------------------------
 
     async def summarize(self, title: str, body: str) -> str | None:
-        text = await self._write("summarize", SUMMARIZE_SYSTEM, f"{title}\n\n{body}")
+        text = await self._write(
+            "summarize",
+            SUMMARIZE_SYSTEM,
+            f"{title}\n\n{body}",
+            lambda: self._fallback().summarize(title, body),
+        )
         # The prompt's own escape hatch for boilerplate that survived
         # extraction, honoured identically to the Claude path.
         if not text or text.rstrip(".") == "SKIP":
@@ -82,8 +92,8 @@ class GeminiClient:
                     # Letting it through means the hourly report fails loudly
                     # instead of posting headlines with nothing under them.
                     raise
-                except Exception:  # noqa: BLE001 - one story, not the batch
-                    log.warning("gemini.summary_failed", story_id=sid)
+                except Exception as e:  # noqa: BLE001 - one story, not the batch
+                    log.warning("gemini.summary_failed", story_id=sid, error=repr(e)[:300])
                     return sid, None
 
         done = await asyncio.gather(*(one(*it) for it in items))
@@ -94,13 +104,22 @@ class GeminiClient:
             f"<article>\n<headline>{title}</headline>\n{body}\n</article>\n"
             f"<thread>\n{thread}\n</thread>\n<question>\n{question}\n</question>"
         )
-        return await self._write("answer", ANSWER_SYSTEM, user)
+        return await self._write(
+            "answer",
+            ANSWER_SYSTEM,
+            user,
+            lambda: self._fallback().answer(question, title, body, thread),
+        )
 
     async def digest(self, headlines: str) -> str:
-        return await self._write("digest", DIGEST_SYSTEM, headlines)
+        return await self._write(
+            "digest", DIGEST_SYSTEM, headlines, lambda: self._fallback().digest(headlines)
+        )
 
     async def weekly(self, headlines: str) -> str:
-        return await self._write("weekly", WEEKLY_SYSTEM, headlines)
+        return await self._write(
+            "weekly", WEEKLY_SYSTEM, headlines, lambda: self._fallback().weekly(headlines)
+        )
 
     # ---- batch shims ------------------------------------------------------
     # Nothing is ever pending: `summarize_batch` returns finished work, so the
@@ -115,9 +134,25 @@ class GeminiClient:
     async def read_batch(self, batch_id: str) -> dict[int, str | None]:
         return {}
 
-    async def _write(self, stage: str, system: str, user: str) -> str:
+    async def _write(
+        self,
+        stage: str,
+        system: str,
+        user: str,
+        fallback: Callable[[], Awaitable[str | None]],
+    ) -> str:
+        """Write with Gemini; when Gemini itself is down, do the same job on Claude.
+
+        Seen 2026-10-31: Google rejected the key and the hourly report went out
+        as bare headlines all day. Claude writes to the same house style, so a
+        Claude summary beats none while a human replaces the key.
+        """
         model = settings().gemini_write_model
-        text, tin, tout = await gemini.write(system, user, model=model)
+        try:
+            text, tin, tout = await gemini.write(system, user, model=model)
+        except _GEMINI_DOWN as e:
+            log.warning("gemini.writer_down", stage=stage, error=repr(e)[:300])
+            return ((await fallback()) or "").strip()
         AI_TOKENS.labels(stage=stage, kind="input_tokens").inc(tin)
         AI_TOKENS.labels(stage=stage, kind="output_tokens").inc(tout)
         log.info("ai.call", stage=stage, model=model, vendor="gemini")
