@@ -214,7 +214,7 @@ async def write(system: str, user: str, *, model: str | None = None) -> tuple[st
             raise Transient(f"gemini unreachable: {e!r}") from e
     if r.status_code == 402:
         raise Depleted(r.text[:300])
-    if r.status_code == 403 or _key_rejected(r):
+    if r.status_code == 403:
         raise Denied(r.text[:300])
     if r.status_code == 429:
         raise QuotaExceeded(r.text[:300])
@@ -269,7 +269,7 @@ async def _ask(prompt: str, model: str) -> Brief:
         # 402 here is how the hourly report posts headlines with nothing under
         # them, which is the exact failure `Denied` was written about.
         raise Depleted(r.text[:300])
-    if r.status_code == 403 or _key_rejected(r):
+    if r.status_code == 403:
         raise Denied(r.text[:300])
     if r.status_code == 429:
         raise QuotaExceeded(r.text[:300])
@@ -277,19 +277,6 @@ async def _ask(prompt: str, model: str) -> Brief:
         raise Transient(f"gemini {r.status_code}: {r.text[:200]}")
     r.raise_for_status()
     return _parse(r.json())
-
-
-def _key_rejected(r: httpx.Response) -> bool:
-    """A 400 that is about the key, not the request.
-
-    Google answers a revoked or deleted key with 400 API_KEY_INVALID rather
-    than 401 or 403. Seen 2026-10-31: the key the gateway holds stopped
-    working at about 02:00 UTC, `raise_for_status` turned every call into a
-    bare HTTPStatusError, and the hourly report posted headlines with nothing
-    under them -- the same symptom `Denied` exists for, reached by a
-    different status code.
-    """
-    return r.status_code == 400 and "API_KEY_INVALID" in r.text
 
 
 def _parse(payload: dict[str, Any]) -> Brief:

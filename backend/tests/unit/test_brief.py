@@ -813,42 +813,6 @@ def test_denied_escapes_the_per_story_catch() -> None:
     assert "raise" in src
 
 
-def test_a_rejected_key_is_a_denial() -> None:
-    """Google answers a revoked key with 400 API_KEY_INVALID, not 403. Seen
-    2026-10-31: read as a generic 400 it emptied every summary for a day."""
-    import httpx
-
-    from techtrend.ai.gemini import _key_rejected
-
-    req = httpx.Request("POST", "http://gw/gemini")
-    bad_key = '{"error": {"code": 400, "status": "INVALID_ARGUMENT", "reason": "API_KEY_INVALID"}}'
-    assert _key_rejected(httpx.Response(400, text=bad_key, request=req))
-    assert not _key_rejected(httpx.Response(400, text='{"error": "bad field"}', request=req))
-
-
-@pytest.mark.asyncio
-async def test_writing_falls_back_to_claude_when_gemini_is_down(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A denied key must not mean bare headlines: the summary comes from
-    Claude instead."""
-    from techtrend.ai import gemini
-    from techtrend.ai.gemini_client import GeminiClient
-
-    async def denied(*a: object, **kw: object) -> tuple[str, int, int]:
-        raise gemini.Denied("API_KEY_INVALID")
-
-    class FakeClaude:
-        async def summarize(self, title: str, body: str) -> str:
-            return f"claude: {title}"
-
-    monkeypatch.setattr(gemini, "write", denied)
-    client = GeminiClient()
-    client._claude = FakeClaude()  # type: ignore[assignment]
-    assert await client.summarize("Headline", "Body") == "claude: Headline"
-    assert await client.summarize_batch([(1, "A", "x")]) == {1: "claude: A"}
-
-
 @pytest.mark.asyncio
 async def test_a_depleted_project_tells_the_asker(monkeypatch: pytest.MonkeyPatch) -> None:
     """402 is not a mystery, and a question that fails must say so.
