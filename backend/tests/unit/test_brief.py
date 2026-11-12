@@ -260,6 +260,25 @@ def test_a_brief_without_the_marker_still_posts() -> None:
     assert tables == ""
 
 
+def test_a_stray_early_marker_does_not_split_the_brief() -> None:
+    """Seen 2026-11-12: a marker after the opening section, and the real one
+    before the tables. The split belongs at the last one."""
+    from techtrend.ai.gemini import TABLES_MARKER, Brief
+
+    text = f"*NEW*\nOne item.\n{TABLES_MARKER}\nLong prose.\n{TABLES_MARKER}\n| a | b |"
+    analysis, tables = Brief(text=text).parts
+    assert analysis == "*NEW*\nOne item.\n\nLong prose."
+    assert tables == "| a | b |"
+
+
+def test_part_labels_are_removed_but_sentences_are_not() -> None:
+    from techtrend.ai.gemini import Brief
+
+    text = "*PART ONE: WRITTEN EXPLANATION*\nPart one of the deal closed.\n**PART TWO**\nEnd."
+    analysis, _ = Brief(text=text).parts
+    assert analysis == "Part one of the deal closed.\nEnd."
+
+
 @pytest.mark.asyncio
 async def test_quota_exhaustion_stops_the_whole_run(monkeypatch: pytest.MonkeyPatch) -> None:
     """A project without billing 429s every grounded call. Treating that as a

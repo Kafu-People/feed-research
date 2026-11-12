@@ -21,6 +21,7 @@ failure model, and folding them together would make `ai_fake` mean two things.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -34,6 +35,7 @@ _ENDPOINT = "{base}/v1beta/models/{model}:generateContent"
 
 def _url(model: str) -> str:
     return _ENDPOINT.format(base=settings().gemini_base_url.rstrip("/"), model=model)
+
 
 # The house style, same rule as the Anthropic prompts in ai/prompts/. Without
 # it a brief is written in the register of the pages it read -- forum slang and
@@ -74,7 +76,8 @@ table is fine; paragraphs are not.
 
 Never omit a part. If there is genuinely nothing to tabulate -- a quiet day
 with two news items -- write the marker anyway and put one short table under
-it.
+it. Write the marker exactly once, and never write "Part one" or "Part two"
+as a heading.
 
 Use **bold** on the fact that matters in a sentence -- the platform name, the
 number, the verdict -- in both parts. That is the only markup part one uses.
@@ -142,6 +145,10 @@ class Source:
 
 # The model is told to separate its two parts with this line and nothing else.
 TABLES_MARKER = "---TABLES---"
+# "PART ONE: WRITTEN EXPLANATION" is the style guide's name for a part, not a
+# heading for the reader; Claude copies it in anyway.
+# Upper case only: "Part one of the deal..." is a sentence, not a label.
+_PART_LABEL = re.compile(r"^[*#\s]*PART (?:ONE|TWO)\b[^\n]*\n?", re.MULTILINE)
 
 
 @dataclass(frozen=True)
@@ -155,10 +162,15 @@ class Brief:
         """(analysis, tables). The tables half is empty when the model wrote
         no marker, which is the fallback the caller has to handle rather than
         a failure -- a brief with only prose is still worth posting."""
-        if TABLES_MARKER not in self.text:
-            return self.text.strip(), ""
-        head, _, tail = self.text.partition(TABLES_MARKER)
-        return head.strip(), tail.strip()
+        text = _PART_LABEL.sub("", self.text)
+        if TABLES_MARKER not in text:
+            return text.strip(), ""
+        # Split at the LAST marker. Claude has written one after an opening
+        # section as well as before the tables (2026-11-12), and splitting at
+        # the first posted 900 characters as the write-up and 36,000 as
+        # "tables". An earlier stray marker is dropped from the write-up.
+        head, _, tail = text.rpartition(TABLES_MARKER)
+        return head.replace(TABLES_MARKER, "").strip(), tail.strip()
 
     @property
     def searches(self) -> int:
