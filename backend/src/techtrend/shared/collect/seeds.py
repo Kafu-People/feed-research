@@ -354,6 +354,16 @@ HN_VOICE: list[Seed] = [
             "https://hnrss.org/newest?q=bootstrapped&count=25",
             "https://hnrss.org/newest?q=%22product+market+fit%22&count=25",
             "https://hnrss.org/newest?q=%22venture+capital%22&count=25",
+            # early earning opportunities -- probed 2026-11-12. Launch HN is
+            # YC companies announcing themselves, which is when a new
+            # marketplace or data vendor first shows up. `"Show HN"` stays out
+            # for the reason above. Who-is-hiring was left out too: one item per
+            # job ad, and the remotedevjobs brief already covers that market.
+            "https://hnrss.org/launches",
+            "https://hnrss.org/newest?q=%22AI+trainer%22&count=25",
+            "https://hnrss.org/newest?q=%22paid+beta%22&count=25",
+            "https://hnrss.org/newest?q=bounty&count=25",
+            "https://hnrss.org/newest?q=annotators&count=25",
         ],
         authority=0.55,
     ),
@@ -581,5 +591,50 @@ ANALYSIS: list[Seed] = [
         # An accelerator talking about itself, which is still the primary
         # source for what it is funding.
         authority=0.55,
+    ),
+]
+
+# Where a new earning opportunity shows up first: product launches, and the
+# few AI-data vendors that publish a feed at all. Mainstream outlets cover a
+# new gig platform after it is crowded; a launch listing covers it on day one.
+#
+# Probed 2026-11-12. Left out: betalist.com/feed (404 -- its feed lives on
+# feedburner), and the blogs of Scale, Surge, Labelbox, micro1, Mercor,
+# Invisible, Prolific, Toloka, Appen and Handshake (404 or redirected to an
+# HTML page: no feed). TELUS Digital answers 403. Those vendors are watched
+# through their public job boards instead (deliver/jobwatch.py).
+EARLY_SIGNAL: list[Seed] = [
+    _s(
+        "producthunt.com",
+        "Product Hunt",
+        "C",
+        ["https://www.producthunt.com/feed"],
+        # Every launch of the day, most of them irrelevant. The topic matcher
+        # is what narrows it; seeded low so a launch never outranks reporting.
+        authority=0.4,
+    ),
+    _s(
+        "feeds.feedburner.com",
+        "BetaList",
+        "C",
+        ["https://feeds.feedburner.com/BetaList"],
+        # Startups before launch -- the earliest public listing there is.
+        authority=0.4,
+    ),
+    _s(
+        "snorkel.ai",
+        "Snorkel AI",
+        "C",
+        ["https://snorkel.ai/feed/"],
+        # A data vendor's own blog: new expert-data programs are announced here.
+        authority=0.5,
+    ),
+    _s(
+        "welocalize.com",
+        "Welocalize",
+        "C",
+        ["https://www.welocalize.com/feed/"],
+        # Runs language and AI-data work; new language programs appear here.
+        authority=0.5,
     ),
 ]

@@ -604,4 +604,63 @@ TOPICS: list[SeedTopic] = [
             "adoption",
         ],
     },
+    {
+        # New ways to earn from flexible remote work, caught at launch rather
+        # than after the mainstream press makes them crowded. Fed mostly by the
+        # EARLY_SIGNAL sources and the hnrss opportunity queries.
+        #
+        # Probed 2026-11-12 against 25k stored articles. Dropped: "make money"
+        # (matched Meta's cash flow and smart-TV tracking), "beta testers"
+        # (WhatsApp feature betas), "bounty program" (a government fraud
+        # bounty), and "Launch HN" (every YC launch, most of them dev tools).
+        "title": "New earning platforms & gig launches",
+        "must": [
+            "paid beta",
+            "paid testers",
+            "usability testing",
+            "user testing",
+            "bug bounty",
+            "side hustle",
+            "gig work",
+            "gig workers",
+            "AI trainers",
+            "annotators",
+            "task marketplace",
+            "microtasks",
+            "freelance marketplace",
+            "contributors wanted",
+            "early access program",
+        ],
+        "should": [
+            "paid",
+            "pay",
+            "per hour",
+            "hourly",
+            "earn",
+            "workers",
+            "contractors",
+            "freelancers",
+            "remote",
+            "launch",
+            "waitlist",
+            "signup",
+            "new countries",
+            "expands to",
+        ],
+        "exclude": [
+            "iOS beta",
+            "macOS beta",
+            "Android beta",
+            "public beta",
+            "watchOS beta",
+            "PlayStation",
+            "Xbox",
+            "Nintendo",
+            "Steam",
+            "game",
+            "airdrop",
+            "memecoin",
+        ],
+        "entities": [],
+    },
 ]

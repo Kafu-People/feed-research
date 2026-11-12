@@ -174,13 +174,14 @@ def test_banned_publisher_is_not_in_the_seed_list() -> None:
     from techtrend.shared.collect.seeds import (
         ANALYSIS,
         DEV_MARKET,
+        EARLY_SIGNAL,
         HN_VOICE,
         TECH,
         VENTURE,
         WORK_TREND,
     )
 
-    seeds = (*TECH, *WORK_TREND, *HN_VOICE, *DEV_MARKET, *VENTURE, *ANALYSIS)
+    seeds = (*TECH, *WORK_TREND, *HN_VOICE, *DEV_MARKET, *VENTURE, *ANALYSIS, *EARLY_SIGNAL)
     assert not [s for s in seeds if site_blocked(s["domain"], DEFAULT_BLOCK_SITES)]
 
 
