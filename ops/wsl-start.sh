@@ -33,6 +33,7 @@ ENVF=$REPO/backend/.env
 PGPORT_TT=5433
 INGEST_LOG=/var/log/techtrend-ingest.log
 DELIVER_LOG=/var/log/techtrend-deliver.log
+SLACKBOT_LOG=/var/log/techtrend-slackbot.log
 # TWO workers, split by stage, because the queue has no aging.
 #
 # `claim` is ORDER BY priority, run_after LIMIT :batch -- so while four or more
@@ -126,7 +127,32 @@ start_worker() {
   fi
 }
 
+# The Socket Mode listener: `/techtrend` slash commands and @mentions in
+# threads. Not a worker -- it claims no jobs, it only enqueues them -- so it
+# runs alongside both. One connection only: Slack spreads events across
+# every open socket, so a second listener would answer half the commands.
+start_slackbot() {
+  if pgrep -f "techtrend slackbot" >/dev/null; then
+    log "slackbot already running"
+    return
+  fi
+  if ! grep -q '^TT_SLACK_APP_TOKEN=.' "$ENVF"; then
+    log "slackbot skipped -- no TT_SLACK_APP_TOKEN in $ENVF"
+    return
+  fi
+  cd "$REPO/backend" || return 1
+  setsid nohup "${AS_APP[@]}" .venv/bin/techtrend slackbot >>"$SLACKBOT_LOG" 2>&1 </dev/null &
+  sleep 5
+  if pgrep -f "techtrend slackbot" >/dev/null; then
+    log "slackbot started"
+  else
+    log "slackbot DIED immediately -- see $SLACKBOT_LOG"
+    tail -5 "$SLACKBOT_LOG"
+  fi
+}
+
 start_worker ingest  "$STAGES_INGEST"  4 "$INGEST_LOG"
 start_worker deliver "$STAGES_DELIVER" 2 "$DELIVER_LOG"
+start_slackbot
 
 log "done"
