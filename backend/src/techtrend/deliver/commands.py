@@ -452,7 +452,7 @@ async def _do_run(rest: str) -> tuple[str, list[Block]]:
             _blocks(
                 title="Which one?",
                 body="`/techtrend run <name>` — or add `daily`, `weekly` or `monthly`.",
-                note="_Without one it runs `daily`: what is new in the last 24 hours._",
+                note="_Without one it runs `daily`: the full report, newest first._",
             ),
         )
     # The cadence is an optional LAST word. Taken from the end rather than a
@@ -480,7 +480,7 @@ async def _do_run(rest: str) -> tuple[str, list[Block]]:
         priority=50,
     )
     asked = {
-        "daily": "what is new in the last 24 hours",
+        "daily": "the full report, newest first",
         "weekly": "the last 7 days",
         "monthly": "the complete overview",
     }[cadence]
