@@ -456,13 +456,14 @@ def test_due_periods_are_under_the_nominal_window() -> None:
     assert _period("monthly") < timedelta(days=30)
 
 
-def test_the_window_is_what_makes_a_daily_post_news() -> None:
-    """The same topic asked daily must ask for what CHANGED, or it reprints
-    yesterday's overview -- measured at 17,542 characters, identical."""
+def test_the_daily_window_asks_for_the_full_report_led_by_news() -> None:
+    """Daily is the full report, newest first and dated. "Only the last 24
+    hours" produced a model arguing with the spec instead of a report
+    (2026-11-11), and the reader wants the whole picture every day."""
     from techtrend.deliver.brief import CADENCES
 
-    assert "last 24 hours" in CADENCES["daily"]["window"]
-    assert "NEW" in CADENCES["daily"]["window"]
+    assert "full current report" in CADENCES["daily"]["window"]
+    assert "Date every data point" in CADENCES["daily"]["window"]
     assert "7 days" in CADENCES["weekly"]["window"]
     assert "complete current overview" in CADENCES["monthly"]["window"]
 

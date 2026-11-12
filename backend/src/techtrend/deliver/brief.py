@@ -35,11 +35,13 @@ CADENCES: dict[str, dict[str, str]] = {
     "daily": {
         "column": "last_run_at",
         "label": "today",
+        # The full report, every day: the reader wants the whole picture, and
+        # "only the last 24 hours" against a nine-section spec made Claude
+        # argue with the spec instead of answering it (2026-11-11).
         "window": (
-            "Report ONLY what is NEW or CHANGED in the last 24 hours. Do not "
-            "restate background a regular reader already knows. If little "
-            "happened, say that in one or two sentences rather than padding "
-            "with old material. Lead with the newest thing and give its date."
+            "Give the full current report as it stands today. Lead with what "
+            "is new or changed most recently and give its date. Date every "
+            "data point."
         ),
     },
     "weekly": {
