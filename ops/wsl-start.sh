@@ -51,7 +51,7 @@ DELIVER_LOG=/var/log/techtrend-deliver.log
 # the crawl against every publisher, and per-host politeness is an invariant
 # on this project, not a tuning knob.
 STAGES_INGEST=collect,read,group,judge,match
-STAGES_DELIVER=notify,summarize,hourly,digest,brief,discuss,maintenance
+STAGES_DELIVER=notify,summarize,hourly,digest,brief,jobwatch,discuss,maintenance
 
 log() { printf '[%s] %s\n' "$(date -Is)" "$*"; }
 

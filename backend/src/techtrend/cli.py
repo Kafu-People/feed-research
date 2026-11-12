@@ -426,6 +426,12 @@ async def _brief(job: queue.Job) -> None:
     await brief_worker.run(job)
 
 
+async def _jobwatch(job: queue.Job) -> None:
+    from techtrend.deliver import jobwatch
+
+    await jobwatch.run(job)
+
+
 async def _hourly(job: queue.Job) -> None:
     from techtrend.deliver import hourly as hourly_worker
 
@@ -450,6 +456,7 @@ HANDLERS = {
     "summarize": _summarize,
     "hourly": _hourly,
     "brief": _brief,
+    "jobwatch": _jobwatch,
     "discuss": _discuss,
     "maintenance": _maintenance,
 }
@@ -515,6 +522,21 @@ async def _sweep_brief() -> None:
             {"cadence": "monthly"},
             priority=PRIORITY_BACKFILL,
         )
+
+
+JOBWATCH_INTERVAL_S = 6 * 3600
+
+
+async def _sweep_jobwatch() -> None:
+    """Enqueue one job-board check per six hours.
+
+    Four a day rather than one: a new contributor role is worth most in its
+    first hours, and the check costs nothing but eleven small HTTP fetches.
+    Same time-bucket key as `_sweep_maintenance`, so it fires once per bucket
+    however often the loop spins.
+    """
+    bucket = int(time.time()) // JOBWATCH_INTERVAL_S
+    await queue.enqueue("jobwatch", f"jobwatch:{bucket}", priority=PRIORITY_BACKFILL)
 
 
 async def _sweep_hourly() -> None:
@@ -592,6 +614,7 @@ async def _run_worker(stages: list[str], concurrency: int) -> None:
     do_summarize = "summarize" in stages
     do_hourly = "hourly" in stages
     do_brief = "brief" in stages
+    do_jobwatch = "jobwatch" in stages
 
     while not stop.is_set():
         if sweep is not None:
@@ -607,6 +630,8 @@ async def _run_worker(stages: list[str], concurrency: int) -> None:
             await _sweep_hourly()
         if do_brief:
             await _sweep_brief()
+        if do_jobwatch:
+            await _sweep_jobwatch()
         jobs = await queue.claim(stages, batch=concurrency)
         if not jobs:
             # Graceful shutdown: stop claiming, let in-flight jobs finish.
