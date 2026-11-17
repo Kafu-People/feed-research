@@ -182,9 +182,19 @@ def _wire(monkeypatch: pytest.MonkeyPatch, text_: str) -> _Spy:
         yield _Session()
 
     spy = _Spy()
+    spy.released = []  # type: ignore[attr-defined]
+
+    async def fake_claim(name: str):
+        return None  # never posted before: the slot is free
+
+    async def fake_release(name: str, prev):
+        spy.released.append(name)  # type: ignore[attr-defined]
+
     monkeypatch.setattr(brief_mod.gemini, "research", fake_research)
     monkeypatch.setattr(brief_mod, "SlackClient", lambda: spy)
     monkeypatch.setattr(brief_mod, "session_scope", fake_scope)
+    monkeypatch.setattr(brief_mod, "_claim", fake_claim)
+    monkeypatch.setattr(brief_mod, "_release", fake_release)
     monkeypatch.setenv("TT_SLACK_BRIEF_CHANNEL", "C0BRIEFS001")
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     return spy
@@ -447,58 +457,47 @@ def test_a_long_prompt_echo_cannot_break_the_reply() -> None:
     assert _short("short one") == "short one"
 
 
-# ------------------------------------------ one topic, three rhythms
+# ------------------------------------------ one run per topic per day
 
 
-def test_each_cadence_reads_and_writes_its_own_stamp() -> None:
-    """ "Did we do the weekly one yet" cannot be answered by a single
-    `last_run_at`, which is why there are three columns."""
-    from techtrend.deliver.brief import _DUE_SQL, _MARK_SQL, CADENCES
+def test_there_is_one_cadence_and_monday_carries_the_week() -> None:
+    """Weekly and monthly runs posted every topic again (16 posts on Monday
+    2026-11-16). One daily brief; on Mondays it carries a THIS WEEK section."""
+    from datetime import date
 
-    assert set(CADENCES) == {"daily", "weekly", "monthly"}
-    cols = {c["column"] for c in CADENCES.values()}
-    assert cols == {"last_run_at", "last_weekly_at", "last_monthly_at"}
-    for name, c in CADENCES.items():
-        assert c["column"] in str(_DUE_SQL[name])
-        assert c["column"] in str(_MARK_SQL[name])
+    from techtrend.deliver.brief import CADENCES, WEEK_SECTION, asked_prompt
 
-
-def test_due_periods_are_under_the_nominal_window() -> None:
-    """A job that fired at 08:00:03 yesterday must not read as "not due yet"
-    at 08:00:01 today."""
-    from datetime import timedelta
-
-    from techtrend.deliver.brief import _period
-
-    assert _period("daily") < timedelta(days=1)
-    assert _period("weekly") < timedelta(days=7)
-    assert _period("monthly") < timedelta(days=30)
+    assert set(CADENCES) == {"daily"}
+    monday, tuesday = date(2026, 11, 16), date(2026, 11, 17)
+    assert WEEK_SECTION in asked_prompt("p", monday)
+    assert WEEK_SECTION not in asked_prompt("p", tuesday)
+    assert "full current report" in asked_prompt("p", tuesday)
 
 
-def test_the_daily_window_asks_for_the_full_report_led_by_news() -> None:
-    """Daily is the full report, newest first and dated. "Only the last 24
-    hours" produced a model arguing with the spec instead of a report
-    (2026-11-11), and the reader wants the whole picture every day."""
-    from techtrend.deliver.brief import CADENCES
+def test_todays_date_is_the_first_thing_the_model_reads() -> None:
+    """Without a date the model wrote "637 days ago" and listed programs whose
+    deadline had passed as open."""
+    from datetime import date
 
-    assert "full current report" in CADENCES["daily"]["window"]
-    assert "Date every data point" in CADENCES["daily"]["window"]
-    assert "7 days" in CADENCES["weekly"]["window"]
-    assert "complete current overview" in CADENCES["monthly"]["window"]
+    from techtrend.deliver.brief import asked_prompt
+
+    out = asked_prompt("topic words", date(2026, 11, 17))
+    assert out.startswith("Today's date is 2026-11-17 (America/New_York).")
+    assert out.index("topic words") < out.index("full current report")
 
 
-def test_the_header_says_which_rhythm_it_is() -> None:
+def test_the_header_says_today() -> None:
     from techtrend.deliver.brief import _render
 
-    for cadence, expect in [("daily", "today"), ("weekly", "this week")]:
-        _, blocks = _render("aigigwork", "body", [], 1, label=expect)
-        assert expect in blocks[0]["text"]["text"], cadence
+    _, blocks = _render("aigigwork", "body", [], 1, label="today")
+    assert "today" in blocks[0]["text"]["text"]
 
 
 @pytest.mark.asyncio
-async def test_a_one_off_question_gets_no_window(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A question is already specific. Appending "only the last 24 hours" to
-    it would silently rewrite what the person asked."""
+async def test_a_one_off_question_gets_the_date_but_no_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A question is already specific: no daily window appended to it."""
     from techtrend.platform.config import settings
 
     seen: dict[str, str] = {}
@@ -514,16 +513,66 @@ async def test_a_one_off_question_gets_no_window(monkeypatch: pytest.MonkeyPatch
         await brief_mod._one(spy, "question", "Is Mercor still paying?", heading="Is Mercor...")
     finally:
         settings.cache_clear()
-    assert seen["prompt"] == "Is Mercor still paying?"
+    assert seen["prompt"].startswith("Today's date is ")
+    assert seen["prompt"].endswith("Is Mercor still paying?")
+    assert "full current report" not in seen["prompt"]
 
 
 @pytest.mark.asyncio
-async def test_run_defaults_to_daily_and_accepts_a_cadence(
+async def test_a_topic_that_posted_recently_is_not_posted_again(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`run` used to always mean daily, silently. The rhythm is the whole
-    difference between news and a reprint of the overview, so it has to be
-    sayable -- and visible in the reply when it was not said."""
+    """The 20-hour guard: a restart, a retry or a second job finds the slot
+    taken and posts nothing -- and pays for no search."""
+    from techtrend.platform.config import settings
+
+    settings.cache_clear()
+    spy = _wire(monkeypatch, "A full report.")
+    called: list[str] = []
+
+    async def taken(name: str):
+        return brief_mod._UNSET
+
+    async def fake_research(prompt: str) -> Brief:
+        called.append(prompt)
+        return Brief(text="x", sources=[], queries=["q"])
+
+    monkeypatch.setattr(brief_mod, "_claim", taken)
+    monkeypatch.setattr(brief_mod.gemini, "research", fake_research)
+    try:
+        spent = await brief_mod._one(spy, "redteam", "prompt")
+    finally:
+        settings.cache_clear()
+    assert spent == 0 and called == [] and spy.posts == []
+
+
+@pytest.mark.asyncio
+async def test_a_failed_topic_gives_its_slot_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    from techtrend.platform.config import settings
+
+    settings.cache_clear()
+    spy = _wire(monkeypatch, "")  # empty answer: nothing posted
+    try:
+        await brief_mod._one(spy, "redteam", "prompt")
+    finally:
+        settings.cache_clear()
+    assert spy.posts == [] and spy.released == ["redteam"]  # type: ignore[attr-defined]
+
+
+def test_the_claim_is_one_atomic_update() -> None:
+    """Of two runs racing for one topic, exactly one gets a row back."""
+    from techtrend.deliver.brief import _CLAIM
+
+    sql = str(_CLAIM)
+    assert sql.startswith("UPDATE brief_topics SET last_run_at = now()")
+    assert "last_run_at < now() - make_interval(hours => :gap)" in sql
+    assert "RETURNING" in sql
+
+
+@pytest.mark.asyncio
+async def test_run_ignores_a_cadence_word(monkeypatch: pytest.MonkeyPatch) -> None:
+    """There is one cadence. `run aigigwork monthly` from habit still runs
+    the daily brief rather than failing."""
     import contextlib
 
     from techtrend.deliver import commands
@@ -553,12 +602,10 @@ async def test_run_defaults_to_daily_and_accepts_a_cadence(
     monkeypatch.setattr(commands, "session_scope", fake_scope)
     monkeypatch.setattr(queue, "enqueue", fake_enqueue)
 
-    fallback, _ = await commands._do_run("aigigwork")
-    assert enqueued[-1]["cadence"] == "daily"
-    assert "daily" in fallback  # the reply says which one it chose for you
-
+    await commands._do_run("aigigwork")
     await commands._do_run("aigigwork monthly")
-    assert enqueued[-1]["cadence"] == "monthly"
+    assert [e["name"] for e in enqueued] == ["aigigwork", "aigigwork"]
+    assert all(e["cadence"] == "daily" for e in enqueued)
 
 
 @pytest.mark.asyncio
