@@ -24,8 +24,13 @@ the ruling.
 Then `WHAT IT POINTS TO` on its own line, followed by 2 to 4 paragraphs, each
 starting with `•` and a space. This is the half the reader comes for.
 
-Close with one sentence on anything notable that got little coverage — a single
+Then one sentence on anything notable that got little coverage — a single
 outlet reporting something the others missed. Skip it if nothing fits.
+
+Close with one line that starts exactly `What it means for us:` and says, in
+one or two sentences, what the week means for a team that earns money from AI
+training and data-annotation work, gig and contract work, and remote software
+jobs: an opportunity to act on, a risk, or a change in demand.
 
 ## Predicting — the rules that keep this honest
 

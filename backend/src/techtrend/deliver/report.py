@@ -22,15 +22,16 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import text
 
 from techtrend.ai.client import client as ai_client
-from techtrend.deliver.digest import linkify
+from techtrend.deliver.digest import _EXISTS, _RECORD, linkify
 from techtrend.deliver.slack import SlackClient, to_mrkdwn
 from techtrend.platform import queue, telemetry
 from techtrend.platform.config import settings, site_blocked
 from techtrend.platform.db import session_scope
 from techtrend.topic.match import blocked, searchable
 
-# Saturday. `datetime.weekday()` is Monday-0, so Saturday is 5.
-REPORT_WEEKDAY = 5
+# Friday (operator decision 2026-11-17): the week's roundup lands before the
+# weekend rather than during it. `datetime.weekday()` is Monday-0.
+REPORT_WEEKDAY = 4
 REPORT_HOUR = 15
 
 
@@ -64,7 +65,7 @@ def week_window(now: datetime | None = None) -> tuple[datetime, datetime]:
 # survive into the model's view. description and entities come along so the
 # term gate reads the same text the matcher would.
 _WEEK = text("""
-    SELECT a.title, a.description, a.entities, si.name AS site, si.domain,
+    SELECT a.title, a.url, a.description, a.entities, si.name AS site, si.domain,
            sp.posted_at, sp.ts, st.source_count,
            coalesce(
                (SELECT string_agg(t.title, ', ' ORDER BY m.match_score DESC)
@@ -217,8 +218,15 @@ async def run(job: queue.Job) -> None:
         return
     channel = s.slack_channel
     since, until = week_window()
+    # Scheduled now, so it needs the digest's guard against posting twice. The
+    # `daily_digests` ledger, keyed by the week's end day under its own
+    # channel key, survives the queue purging the finished job row.
+    day = until.astimezone(tz()).date()
+    ledger = f"{channel}#weekly"
 
     async with session_scope() as sess:
+        if (await sess.execute(_EXISTS, {"day": day, "ch": ledger})).one_or_none():
+            return
         body, rows, totals = await build(
             sess, channel, since.astimezone(UTC), until.astimezone(UTC)
         )
@@ -231,4 +239,6 @@ async def run(job: queue.Job) -> None:
     body = await linkify(to_mrkdwn(body), rows, client, channel)
     fallback, blocks = blocks_for(until, body, totals.n, totals.sites)
     ts = await client.post(channel, fallback, blocks=blocks, unfurl=False)
+    async with session_scope() as sess:
+        await sess.execute(_RECORD, {"day": day, "ch": ledger, "ts": ts, "n": totals.n})
     telemetry.log.info("weekly.posted", ts=ts, stories=totals.n, chars=len(body))

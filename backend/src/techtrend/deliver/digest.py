@@ -24,7 +24,7 @@ from techtrend.platform.db import session_scope
 # Ordered by reach then recency: when the cap bites, the widely-covered
 # stories are the ones that survive into the model's view.
 _DAY = text("""
-    SELECT a.title, si.name AS site, sp.posted_at, sp.ts, st.source_count,
+    SELECT a.title, a.url, si.name AS site, sp.posted_at, sp.ts, st.source_count,
            coalesce(
                (SELECT string_agg(t.title, ', ' ORDER BY m.match_score DESC)
                   FROM matches m JOIN topics t ON t.id = m.topic_id
@@ -92,26 +92,37 @@ def render_headlines(rows: list[Any]) -> str:
     return "\n".join(out)
 
 
-# [phrase](12) -- the model's story reference, resolved to a permalink here.
+# [phrase](12) -- the model's story reference, resolved to the article here.
 # The number is bounded to 1-3 digits so a stray "(2026)" after a bracket cannot
 # be read as a reference.
-_LINK = re.compile(r"\[([^\[\]\n]{1,120})\]\((\d{1,3})\)")
+_LINK = re.compile(r"\[([^\[\]\n]{1,300})\]\((\d{1,3})\)")
+# Anything still shaped like a reference after linking -- an invented number,
+# a phrase over the length limit -- loses its brackets and number. The
+# 2026-11-16 digest showed "[Claude's new Mythos version ... three days](20)"
+# raw, because the phrase was longer than the old 120-character limit.
+_LEFTOVER = re.compile(r"\[([^\[\]\n]+)\]\(\d{1,3}\)")
 
 
 async def linkify(body: str, rows: list[Any], client: SlackClient, channel: str) -> str:
-    """Turn [phrase](n) into Slack's <url|phrase>, resolving n to a permalink.
+    """Turn [phrase](n) into Slack's <url|phrase>.
 
-    A reference the model invented, or one whose permalink Slack declines to
-    produce, degrades to the bare phrase. A digest with a dead link in it is
-    worse than one with plain text, and the sentence reads fine either way.
+    The link goes to the ARTICLE. It used to go to the Slack message the story
+    was posted in, and with several stories in one message, several phrases in
+    one digest pointed at the same hourly post. A row without a URL falls back
+    to that permalink; a reference that resolves to nothing becomes the bare
+    phrase -- a sentence with no link reads fine, one with a raw "(20)" does not.
     """
     wanted = {int(m.group(2)) for m in _LINK.finditer(body)}
     links: dict[int, str] = {}
     for n in sorted(wanted):
         if not 1 <= n <= len(rows):
             continue  # hallucinated index
+        row = rows[n - 1]
+        if url := getattr(row, "url", None):
+            links[n] = str(url)
+            continue
         try:
-            if url := await client.permalink(channel, rows[n - 1].ts):
+            if url := await client.permalink(channel, row.ts):
                 links[n] = url
         except Exception:  # noqa: BLE001 - a missing link must not lose the digest
             telemetry.log.warning("digest.permalink_failed", n=n)
@@ -120,10 +131,10 @@ async def linkify(body: str, rows: list[Any], client: SlackClient, channel: str)
         phrase, n = m.group(1), int(m.group(2))
         url = links.get(n)
         # Slack link text cannot contain an unescaped | or > without breaking.
-        safe = phrase.replace("|", "\u2758").replace(">", "&gt;")
+        safe = phrase.replace("|", "❘").replace(">", "&gt;")
         return f"<{url}|{safe}>" if url else phrase
 
-    out = _LINK.sub(sub, body)
+    out = _LEFTOVER.sub(lambda m: m.group(1), _LINK.sub(sub, body))
     telemetry.log.info("digest.linked", refs=len(wanted), resolved=len(links))
     return out
 
@@ -183,6 +194,12 @@ def _chunk(body: str, limit: int) -> list[str]:
 
 
 async def run(job: queue.Job) -> None:
+    # The weekly roundup rides this stage (see cli._sweep_weekly).
+    if job.payload.get("kind") == "weekly":
+        from techtrend.deliver import report
+
+        await report.run(job)
+        return
     s = settings()
     if not s.digest_enabled or s.slack_bot_token is None or not s.slack_channel:
         return

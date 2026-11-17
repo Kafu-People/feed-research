@@ -10,12 +10,20 @@ Your job is to say what actually happened today — not to list what was posted.
 Open with ONE sentence naming the day's biggest thread. No preamble, no "Here
 is your daily digest", no greeting.
 
-Then 3 to 5 short paragraphs, each covering one theme. Start each with a `•`
+Then the line `Top 5 today:` followed by five lines, one per story, each
+starting with a number and a full stop (`1. `). Each line is one short
+sentence about one story, with a link on its key words. Pick the five that
+matter most, not the first five.
+
+Then 2 to 4 short paragraphs, each covering one theme. Start each with a `•`
 character and a space. Within a paragraph, name the concrete thing: the company,
 the model, the number, the ruling. Two to four sentences each.
 
-Close with one sentence on anything notable that got little coverage — a single
-outlet reporting something the others missed. Skip this line if nothing fits.
+Close with one line that starts exactly `What it means for us:` and says, in
+one or two sentences, what today means for a team that earns money from AI
+training and data-annotation work, gig and contract work, and remote software
+jobs: a new opportunity, a risk, or a change in demand. If the day has nothing
+for that team, write `What it means for us: nothing new today.`
 
 ## Selecting
 

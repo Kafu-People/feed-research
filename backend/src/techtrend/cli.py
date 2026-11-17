@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import signal
 import time
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 
@@ -210,6 +210,94 @@ def brief_dry_run_cmd(
             typer.echo(
                 f"{row.name}: {len(client.posts)} posts, {spent} searches, {problems} problems"
             )
+
+    asyncio.run(_go())
+
+
+@app.command("news-dry-run")
+def news_dry_run_cmd(
+    out: Annotated[str, typer.Option(help="directory for the rendered posts")],
+    hours: Annotated[float, typer.Option(help="edition window, hours back")] = 8.0,
+) -> None:
+    """Render a #feed-ai-news edition and the daily digest to files.
+
+    Uses recent matches INCLUDING already-posted ones, so there is something
+    to look at. Posts nothing and records nothing.
+    """
+    from datetime import UTC, datetime, timedelta
+    from pathlib import Path
+
+    from sqlalchemy import text as sql
+
+    from techtrend.ai.client import client as ai_client
+    from techtrend.deliver import digest, hourly, reactions
+    from techtrend.deliver import news_format as nf
+    from techtrend.deliver.brief import DryRunClient
+    from techtrend.deliver.slack import to_mrkdwn
+    from techtrend.deliver.worker import floor_for
+    from techtrend.platform.db import session_scope
+
+    async def _go() -> None:
+        s = settings()
+        until = datetime.now(UTC)
+        since = until - timedelta(hours=hours)
+        everything = sql(
+            str(hourly._WINDOW).replace(
+                "AND NOT EXISTS (SELECT 1 FROM slack_posts sp WHERE sp.story_id = st.id)", ""
+            )
+        )
+        orig = hourly._WINDOW
+        hourly._WINDOW = everything
+        try:
+            rows = await hourly._window(since, until, hourly.EDITION_CAP, floor_for)
+        finally:
+            hourly._WINDOW = orig
+        summaries = await hourly._summaries(rows, since=since, until=until) or {}
+        by_cat, by_site = await reactions.boosts()
+        ranked = hourly.rank(rows, by_cat, by_site)
+        ed = DryRunClient(Path(out) / "edition")
+        text_, blocks = nf.edition_blocks(
+            name="Midday",
+            when=f"{until:%a %b} {until.day}",
+            rows=ranked,
+            summaries=summaries,
+            top=s.edition_channel_top,
+        )
+        ts = await ed.post("C0DRYRUN", text_, blocks=blocks)
+        for r in ranked:
+            t, b = nf.story_reply_blocks(r, summaries.get(r.id))
+            await ed.post("C0DRYRUN", t, blocks=b, thread_ts=ts)
+        typer.echo(f"edition: {len(ranked)} stories, {len(ed.posts)} posts")
+
+        channel = s.slack_channel or ""
+        d_until = datetime.now(UTC)
+        d_since = d_until - timedelta(hours=s.digest_window_hours)
+        async with session_scope() as sess:
+            d_rows = list(
+                (
+                    await sess.execute(
+                        digest._DAY,
+                        {
+                            "ch": channel,
+                            "since": d_since,
+                            "until": d_until,
+                            "cap": s.digest_max_stories,
+                        },
+                    )
+                ).all()
+            )
+            totals = (
+                await sess.execute(
+                    digest._COUNT, {"ch": channel, "since": d_since, "until": d_until}
+                )
+            ).one()
+        body = await ai_client().digest(digest.render_headlines(d_rows))
+        dg = DryRunClient(Path(out) / "digest")
+        body = await digest.linkify(to_mrkdwn(body or ""), d_rows, dg, channel)  # type: ignore[arg-type]
+        fb, blocks = digest.blocks_for(digest.local_day(), body, totals.n, totals.sites)
+        await dg.post("C0DRYRUN", fb, blocks=blocks)
+        problems = sum(len(p["problems"]) for p in ed.posts + dg.posts)
+        typer.echo(f"digest: {len(d_rows)} stories; slack problems: {problems}")
 
     asyncio.run(_go())
 
@@ -571,7 +659,51 @@ async def _sweep_hourly() -> None:
     interval_s = max(60.0, settings().slack_post_interval_hours * 3600.0)
     offset_s = min(settings().hourly_offset_s, interval_s / 2)
     bucket = int((time.time() - offset_s) // interval_s)
+    # In editions mode this hourly job only looks for breaking stories.
     await queue.enqueue("hourly", f"hourly:{bucket}", priority=PRIORITY_BACKFILL)
+    if settings().slack_delivery_mode == "editions":
+        if due := edition_due():
+            key, payload = due
+            await queue.enqueue("hourly", key, payload, priority=PRIORITY_BACKFILL)
+
+
+EDITION_NAMES = ((11, "Morning"), (14, "Midday"), (24, "Afternoon"))
+
+
+def edition_due(now: Any = None) -> tuple[str, dict[str, Any]] | None:
+    """The latest edition whose hour has passed today, as (key, payload).
+
+    Only the LATEST: a worker that starts at 23:00 files the afternoon edition,
+    not all three. The key is per day and hour, so the edition is queued once
+    however often the loop runs; its window starts at the previous edition, so
+    the morning edition carries the night.
+    """
+    from datetime import UTC, datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    s = settings()
+    tz = ZoneInfo(s.edition_timezone)
+    local = (now or datetime.now(UTC)).astimezone(tz)
+    hours = sorted(set(s.edition_hours))
+    passed = [h for h in hours if h <= local.hour]
+    if not passed:
+        return None
+    hour = passed[-1]
+    at = local.replace(hour=hour, minute=0, second=0, microsecond=0)
+    i = hours.index(hour)
+    prev = (
+        at.replace(hour=hours[i - 1]) if i > 0 else (at - timedelta(days=1)).replace(hour=hours[-1])
+    )
+    name = next(n for limit, n in EDITION_NAMES if hour < limit)
+    payload = {
+        "edition": name,
+        "when": f"{at:%a %b} {at.day}",
+        # An hour of overlap: a story matched just before the boundary but
+        # after the previous edition's query is not lost. slack_posts stops
+        # anything from appearing twice.
+        "since": (prev - timedelta(hours=1)).astimezone(UTC).isoformat(),
+    }
+    return f"edition:{at:%Y-%m-%d}:{hour:02d}", payload
 
 
 async def _sweep_summarize() -> None:
@@ -611,6 +743,34 @@ async def _sweep_digest() -> None:
     )
 
 
+async def _sweep_weekly() -> None:
+    """Enqueue the weekly roundup once its Friday hour has passed.
+
+    Rides the `digest` stage with `kind: weekly`, so no new stage name -- a
+    changed stage list makes the boot script start a second worker. Keyed by
+    the week's end date; the `daily_digests` ledger, under its own channel
+    key, is what stops a second post after the job row is purged.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from techtrend.deliver import report
+
+    if not settings().digest_enabled:
+        return
+    _, until = report.week_window()
+    # Only in the two days after the week closes: a worker restarted the
+    # following Thursday must not file last week's roundup late.
+    if datetime.now(UTC) - until > timedelta(days=2):
+        return
+    day = until.astimezone(report.tz()).date()
+    await queue.enqueue(
+        "digest",
+        f"weekly:{day.isoformat()}",
+        payload={"kind": "weekly", "day": day.isoformat()},
+        priority=PRIORITY_BACKFILL,
+    )
+
+
 async def _run_worker(stages: list[str], concurrency: int) -> None:
     unknown = set(stages) - HANDLERS.keys()
     if unknown:
@@ -645,6 +805,7 @@ async def _run_worker(stages: list[str], concurrency: int) -> None:
             await _sweep_maintenance()
         if do_digest:
             await _sweep_digest()
+            await _sweep_weekly()
         if do_summarize:
             await _sweep_summarize()
         if do_hourly:
