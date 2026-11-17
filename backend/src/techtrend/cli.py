@@ -178,6 +178,42 @@ def seed_sites_cmd() -> None:
     typer.echo(f"sites={out['sites']} endpoints={out['endpoints']}")
 
 
+@app.command("brief-dry-run")
+def brief_dry_run_cmd(
+    out: Annotated[str, typer.Option(help="directory for the rendered posts")],
+    names: Annotated[list[str] | None, typer.Argument(help="topics; default: all")] = None,
+) -> None:
+    """Research topics for real and write the posts to files. Posts nothing.
+
+    Does not mark any topic as run, so it never uses up a topic's daily slot.
+    """
+    from pathlib import Path
+
+    from sqlalchemy import text as sql
+
+    from techtrend.deliver import brief
+    from techtrend.platform.db import session_scope
+
+    async def _go() -> None:
+        async with session_scope() as s:
+            rows = (
+                await s.execute(
+                    sql("SELECT name, prompt FROM brief_topics WHERE active ORDER BY name")
+                )
+            ).all()
+        for row in rows:
+            if names and row.name not in names:
+                continue
+            client = brief.DryRunClient(Path(out) / row.name)
+            spent = await brief._one(client, row.name, row.prompt)
+            problems = sum(len(p["problems"]) for p in client.posts)
+            typer.echo(
+                f"{row.name}: {len(client.posts)} posts, {spent} searches, {problems} problems"
+            )
+
+    asyncio.run(_go())
+
+
 @app.command("print-top-stories")
 def print_top_stories_cmd(limit: int = 15) -> None:
     """The day's top stories by importance -- the M2 acceptance test is
@@ -497,31 +533,16 @@ async def _sweep_brief() -> None:
         return
 
     day = local_day()
-    # Daily every morning. Weekly on Monday, monthly on the 1st -- so a Monday
-    # the 1st files all three, and each is a separate job with its own key,
-    # its own window and its own stamp. The stage skips a topic whose stamp
-    # for THAT cadence is still fresh, so a doubled-up morning costs nothing
-    # extra the next day.
+    # ONE job a day. Weekly (Mondays) and monthly (the 1st) runs used to be
+    # separate jobs that posted every topic again; on 2026-11-16 that was
+    # sixteen posts for eight topics. Monday's daily brief now carries the
+    # week as a section of its own (brief.WEEK_SECTION).
     await queue.enqueue(
         "brief",
         f"brief:daily:{day.isoformat()}",
         {"cadence": "daily"},
         priority=PRIORITY_BACKFILL,
     )
-    if day.weekday() == 0:
-        await queue.enqueue(
-            "brief",
-            f"brief:weekly:{day.isocalendar().week}:{day.year}",
-            {"cadence": "weekly"},
-            priority=PRIORITY_BACKFILL,
-        )
-    if day.day == 1:
-        await queue.enqueue(
-            "brief",
-            f"brief:monthly:{day.year}-{day.month:02d}",
-            {"cadence": "monthly"},
-            priority=PRIORITY_BACKFILL,
-        )
 
 
 JOBWATCH_INTERVAL_S = 6 * 3600

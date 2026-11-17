@@ -77,8 +77,8 @@ HELP_BLOCKS: list[Block] = [
                 "The name is one word.\n\n"
                 "*`/techtrend edit <name> <new prompt>`*\nChange what it asks\n\n"
                 "*`/techtrend remove <name>`*\nStop watching it\n\n"
-                "*`/techtrend run <name> [daily|weekly|monthly]`*\n"
-                "Research it now. Defaults to `daily`.\n\n"
+                "*`/techtrend run <name>`*\n"
+                "Research it now, unless it already posted in the last 20 hours.\n\n"
                 "*`/techtrend question <your question>`*\nAsk once. Nothing is saved."
             ),
         },
@@ -442,7 +442,7 @@ async def _do_remove(rest: str) -> tuple[str, list[Block]]:
 async def _do_run(rest: str) -> tuple[str, list[Block]]:
     """Queue one brief now. The work is a job, not this handler: Slack wants
     an ack in 3 seconds and a grounded search takes far longer."""
-    from techtrend.deliver.brief import CADENCES
+    from techtrend.deliver.brief import MIN_GAP_HOURS
     from techtrend.platform import queue
 
     parts = rest.strip().lower().split()
@@ -451,16 +451,13 @@ async def _do_run(rest: str) -> tuple[str, list[Block]]:
             "Which one?",
             _blocks(
                 title="Which one?",
-                body="`/techtrend run <name>` — or add `daily`, `weekly` or `monthly`.",
-                note="_Without one it runs `daily`: the full report, newest first._",
+                body="`/techtrend run <name>`",
+                note="_The full report, newest first._",
             ),
         )
-    # The cadence is an optional LAST word. Taken from the end rather than a
-    # flag because `run aigigwork monthly` is how a person says it, and a
-    # topic name can never collide -- the three words are reserved below.
+    # There is one cadence now. A trailing `daily`/`weekly`/`monthly` from
+    # habit is ignored rather than refused.
     cadence = "daily"
-    if len(parts) > 1 and parts[-1] in CADENCES:
-        cadence = parts.pop()
     name = parts[0]
 
     async with session_scope() as s:
@@ -479,19 +476,14 @@ async def _do_run(rest: str) -> tuple[str, list[Block]]:
         {"name": name, "cadence": cadence},
         priority=50,
     )
-    asked = {
-        "daily": "the full report, newest first",
-        "weekly": "the last 7 days",
-        "monthly": "the complete overview",
-    }[cadence]
     return (
-        f"Researching {name} ({cadence})",
+        f"Researching {name}",
         _blocks(
-            title=f"Researching `{name}` — {cadence}",
-            body=f"Asking for {asked}.\n> {_short(row.prompt, 280)}",
+            title=f"Researching `{name}`",
+            body=f"Asking for the full report, newest first.\n> {_short(row.prompt, 280)}",
             note=(
-                "_Posts to this channel in a minute. "
-                "Add `daily`, `weekly` or `monthly` to pick a different one._"
+                "_Posts to this channel in a few minutes -- unless it already posted "
+                f"in the last {MIN_GAP_HOURS} hours, in which case nothing new is posted._"
             ),
         ),
     )

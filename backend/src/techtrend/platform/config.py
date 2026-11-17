@@ -343,6 +343,13 @@ class Settings(BaseSettings):
     slack_brief_channel: str | None = None
     # Local hour (digest_timezone) at which the day's briefs run.
     brief_hour: int = Field(default=8, ge=0, le=23)
+    # "Today" as the brief's reader means it: injected into every research
+    # prompt, and the line between an open program and an expired one.
+    brief_timezone: str = "America/New_York"
+    # When set, briefs are written to files in this directory instead of
+    # being posted, and no topic is marked as run. For testing a prompt or a
+    # renderer against real output without touching the channel.
+    brief_dry_run_dir: str | None = None
     # A hard ceiling on grounded searches per day. Grounding is billed per
     # search the model chooses to run -- and the model chooses, not us, so a
     # prompt that provokes ten searches costs ten. This is the stop on a bill

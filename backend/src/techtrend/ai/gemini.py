@@ -83,7 +83,26 @@ Use **bold** on the fact that matters in a sentence -- the platform name, the
 number, the verdict -- in both parts. That is the only markup part one uses.
 
 Markdown is converted to Slack formatting before posting, so bold and the
-part-two tables survive exactly as written."""
+part-two tables survive exactly as written.
+
+## Rules that always apply
+
+- Always produce the full report. Never ask the reader questions or offer
+  options. If data for a section is missing, write "No reliable data found
+  this period" for that section and continue.
+- Give an absolute date (YYYY-MM-DD) for every program, deadline, job
+  posting and statistic. Never write relative dates such as "3 days ago". If
+  the date cannot be determined, write "date unknown".
+- Do not list a program or opportunity whose deadline is before today's date,
+  and never put anything closed in a list of open items.
+- Every statistic cites its source link and that source's date.
+- If sources give conflicting figures for the same metric, show each figure
+  with its source and date, and state that they conflict. Never present two
+  conflicting figures as if both were true without saying so.
+- Prefer primary sources (company sites, government data, Indeed Hiring Lab,
+  CompTIA) over aggregator blogs when both exist.
+- Paraphrase. At most one short quote (under 25 words) per source. Never
+  paste full forum posts or comments."""
 
 
 class NotConfigured(RuntimeError):
