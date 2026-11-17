@@ -236,7 +236,7 @@ class _Spy:
         self.posts: list[dict] = []
 
     async def post(self, channel, text_, blocks=None, thread_ts=None, unfurl=True):
-        self.posts.append({"text": text_, "blocks": blocks or []})
+        self.posts.append({"text": text_, "blocks": blocks or [], "thread_ts": thread_ts})
         return "1.0"
 
 
@@ -277,6 +277,12 @@ def _wire(monkeypatch: pytest.MonkeyPatch, answers: list[Brief]) -> tuple[_Spy, 
     monkeypatch.setattr(brief_mod, "_release", fake_release)
     monkeypatch.setattr(brief_mod, "settings", lambda: _S())
     monkeypatch.setattr(q, "settings", lambda: _S())
+    monkeypatch.setattr(brief_mod.brief_card, "settings", lambda: _S())
+
+    async def fake_summarize(report, today, *, name=""):
+        return brief_mod.brief_card.fallback(report)  # no model call in a unit test
+
+    monkeypatch.setattr(brief_mod.brief_card, "summarize", fake_summarize)
     return spy, calls
 
 
@@ -294,7 +300,7 @@ async def test_every_footer_shows_the_real_source_count(monkeypatch: pytest.Monk
     count rode only on the last post, with the links."""
     spy, _ = _wire(monkeypatch, [Brief(text=REPORT, sources=SRC, queries=["a", "b"])])
     await brief_mod._one(spy, "aigigwork", "p")
-    assert len(spy.posts) == 2
+    assert len(spy.posts) == 3  # card, then write-up and tables in its thread
     for p in spy.posts:
         assert "2 searches · 2 sources" in str(p["blocks"])
     assert "UNVERIFIED" not in _text(spy)
@@ -372,5 +378,10 @@ async def test_dry_run_writes_files_and_posts_nothing(tmp_path, monkeypatch) -> 
     monkeypatch.setattr(brief_mod, "_claim", no_claim)
     await brief_mod._one(client, "aigigwork", "p")
     assert claimed == []  # a dry run never uses up the topic's daily slot
-    assert len(client.posts) == 2 and spy.posts == []
-    assert sorted(p.suffix for p in tmp_path.iterdir()) == [".json", ".json", ".md", ".md"]
+    assert len(client.posts) == 3 and spy.posts == []
+    assert [p["thread_ts"] for p in client.posts] == [None, "dry.1", "dry.1"]
+    assert sorted(p.name for p in tmp_path.iterdir() if p.suffix == ".md") == [
+        "01-channel.md",
+        "02-thread.md",
+        "03-thread.md",
+    ]
