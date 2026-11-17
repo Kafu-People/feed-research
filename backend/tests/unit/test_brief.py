@@ -195,6 +195,11 @@ def _wire(monkeypatch: pytest.MonkeyPatch, text_: str) -> _Spy:
     monkeypatch.setattr(brief_mod, "session_scope", fake_scope)
     monkeypatch.setattr(brief_mod, "_claim", fake_claim)
     monkeypatch.setattr(brief_mod, "_release", fake_release)
+
+    async def fake_summarize(report, today, *, name=""):
+        return brief_mod.brief_card.fallback(report)  # no model call in a unit test
+
+    monkeypatch.setattr(brief_mod.brief_card, "summarize", fake_summarize)
     monkeypatch.setenv("TT_SLACK_BRIEF_CHANNEL", "C0BRIEFS001")
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     return spy
@@ -230,9 +235,10 @@ async def test_ordinary_prose_is_posted(monkeypatch: pytest.MonkeyPatch) -> None
         await brief_mod._one(spy, "dataannotation", "prompt")
     finally:
         settings.cache_clear()
-    # One post: this fixture's answer carries no marker, so there is no
-    # tables half to post.
-    assert len(spy.posts) == 1
+    # A card in the channel, and the report in its thread. No marker in this
+    # answer, so there is no tables half.
+    assert len(spy.posts) == 2
+    assert spy.threads == [None, "1.0"]
 
 
 @pytest.mark.asyncio
@@ -255,9 +261,10 @@ async def test_both_readings_are_posted(monkeypatch: pytest.MonkeyPatch) -> None
         await brief_mod._one(spy, "dataannotation", "prompt")
     finally:
         settings.cache_clear()
-    assert len(spy.posts) == 2
-    assert all(t is None for t in spy.threads)  # both top level, no thread
-    assert "tables" in spy.posts[-1]
+    # The card is the only top-level post; write-up and tables are replies.
+    assert len(spy.posts) == 3
+    assert spy.threads == [None, "1.0", "1.0"]
+    assert "full report" in spy.posts[1] and "tables" in spy.posts[2]
 
 
 def test_a_brief_without_the_marker_still_posts() -> None:

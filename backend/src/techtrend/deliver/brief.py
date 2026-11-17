@@ -24,6 +24,7 @@ from urllib.parse import urlsplit
 from sqlalchemy import text
 
 from techtrend.ai import gemini
+from techtrend.deliver import brief_card
 from techtrend.deliver import brief_quality as quality
 from techtrend.deliver.slack import Block, SlackClient, decode_title, to_slack_report
 from techtrend.platform import queue, telemetry
@@ -265,17 +266,30 @@ async def _research_and_post(
     sources = [src for src in brief.sources if not _banned_source(src)]
     channel = s.slack_brief_channel
     assert channel is not None  # noqa: S101 - narrowed by configured()
-    blocks = await _post_both(
-        client,
-        channel,
-        title=heading or name,
-        label=None if heading else CADENCES["daily"]["label"],
-        analysis=analysis,
-        tables=tables,
-        searches=spent,
-        sources=sources,
-        incomplete=incomplete,
-    )
+    if heading is None:
+        blocks = await _post_card_and_thread(
+            client,
+            channel,
+            name=name,
+            today=today,
+            analysis=analysis,
+            tables=tables,
+            searches=spent,
+            sources=sources,
+            incomplete=incomplete,
+        )
+    else:  # a one-off question: short already, nothing to scroll past
+        blocks = await _post_both(
+            client,
+            channel,
+            title=heading,
+            label=None,
+            analysis=analysis,
+            tables=tables,
+            searches=spent,
+            sources=sources,
+            incomplete=incomplete,
+        )
     telemetry.log.info(
         "brief.posted",
         name=name,
@@ -465,8 +479,12 @@ async def _post_both(
     searches: int,
     sources: list[Any],
     incomplete: bool = False,
+    thread_ts: str | None = None,
 ) -> list[Block]:
     """The write-up, then the same findings as tables -- one of each, at most.
+
+    Top-level for a one-off question; as replies under the channel card
+    (`thread_ts`) for a scheduled brief.
 
     Separate messages rather than a thread, because a thread hides the tables
     behind a click and the tables are usually what someone came for. Either
@@ -477,11 +495,7 @@ async def _post_both(
     only, but the count used to as well, so every write-up said "8 searches ·
     0 sources" while the log said 65.
     """
-    flags = []
-    if not sources:
-        flags.append(UNVERIFIED)
-    if incomplete:
-        flags.append(INCOMPLETE)
+    flags = _flags(sources, incomplete)
     if flags and analysis.strip():
         analysis = "\n".join(flags) + "\n\n" + analysis
     elif flags:
@@ -502,12 +516,85 @@ async def _post_both(
         for fallback, blocks in messages:
             try:
                 # unfurl off: a dozen source links would bury the brief itself.
-                await client.post(channel, fallback, blocks=blocks, unfurl=False)
+                await client.post(
+                    channel, fallback, blocks=blocks, thread_ts=thread_ts, unfurl=False
+                )
                 posted += blocks
             except Exception:  # noqa: BLE001 - one part, never the brief
                 telemetry.log.exception("brief.half_failed", half=lbl)
     telemetry.log.info("brief.posted_both", analysis_chars=len(analysis), table_chars=len(tables))
     return posted
+
+
+def _flags(sources: list[Any], incomplete: bool) -> list[str]:
+    out = []
+    if not sources:
+        out.append(UNVERIFIED)
+    if incomplete:
+        out.append(INCOMPLETE)
+    return out
+
+
+async def _post_card_and_thread(
+    client: Any,
+    channel: str,
+    *,
+    name: str,
+    today: date,
+    analysis: str,
+    tables: str,
+    searches: int,
+    sources: list[Any],
+    incomplete: bool = False,
+) -> list[Block]:
+    """A short card in the channel; the full report and tables in its thread.
+
+    Eight briefs a day posted top-level were a wall of 15,000-40,000-character
+    reports. The card is what the channel reads; the thread is for whoever
+    wants the detail, and it is where follow-up questions go (discuss.py reads
+    the whole thread, report included).
+
+    If the card cannot be posted, the brief goes out the old way -- two
+    top-level posts -- rather than not at all.
+    """
+    card = await brief_card.summarize(f"{analysis}\n\n{tables}", today, name=name)
+    text_, blocks = brief_card.card_blocks(
+        card,
+        title=name,
+        today=today,
+        searches=searches,
+        source_count=len(sources),
+        flags=_flags(sources, incomplete),
+    )
+    try:
+        ts = await client.post(channel, text_, blocks=blocks, unfurl=False)
+    except Exception:  # noqa: BLE001 - the report still goes out, top-level
+        telemetry.log.exception("brief.card_post_failed", name=name)
+        return await _post_both(
+            client,
+            channel,
+            title=name,
+            label=CADENCES["daily"]["label"],
+            analysis=analysis,
+            tables=tables,
+            searches=searches,
+            sources=sources,
+            incomplete=incomplete,
+        )
+    telemetry.log.info("brief.card_posted", name=name, generated=card.generated)
+    thread = await _post_both(
+        client,
+        channel,
+        title=name,
+        label="full report",
+        analysis=analysis,
+        tables=tables,
+        searches=searches,
+        sources=sources,
+        incomplete=incomplete,
+        thread_ts=str(ts),
+    )
+    return blocks + thread
 
 
 def _render_parts(
@@ -608,27 +695,36 @@ class DryRunClient:
         self.posts: list[dict[str, Any]] = []
 
     async def post(
-        self, channel: str, text_: str, blocks: list[Block] | None = None, **kw: Any
-    ) -> dict[str, Any]:
+        self,
+        channel: str,
+        text_: str,
+        blocks: list[Block] | None = None,
+        thread_ts: str | None = None,
+        **kw: Any,
+    ) -> str:
+        """Same contract as SlackClient.post: returns the message's ts."""
         n = len(self.posts) + 1
+        ts = f"dry.{n}"
         problems = slack_problems(blocks or [])
         rec = {
             "n": n,
+            "ts": ts,
+            "thread_ts": thread_ts,
             "channel": channel,
             "text": text_,
             "blocks": blocks or [],
             "problems": problems,
         }
         self.posts.append(rec)
-        stem = re.sub(r"[^a-z0-9]+", "-", text_.split(" — ")[0].lower()).strip("-")[:40]
+        where = "thread" if thread_ts else "channel"
         # Made again per post: on 2026-11-17 a directory created at the start
         # of a ten-minute run was gone when its first post was written.
         self.out_dir.mkdir(parents=True, exist_ok=True)
-        path = self.out_dir / f"{n:02d}-{stem}"
+        path = self.out_dir / f"{n:02d}-{where}"
         path.with_suffix(".json").write_text(json.dumps(rec, indent=2, ensure_ascii=False))
         path.with_suffix(".md").write_text(_as_markdown(rec), encoding="utf-8")
         telemetry.log.info("brief.dry_run_post", file=str(path), problems=problems)
-        return {"ok": True, "ts": f"dry.{n}"}
+        return ts
 
 
 def _as_markdown(rec: dict[str, Any]) -> str:
