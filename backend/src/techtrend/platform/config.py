@@ -291,7 +291,22 @@ class Settings(BaseSettings):
     # "hourly" costs the per-story thread, and with it the Q&A listener's only
     # place to answer and the follow-up's only place to land. That is the
     # trade, stated here so it is not rediscovered as a bug.
-    slack_delivery_mode: Literal["cards", "hourly"] = "hourly"
+    #
+    #   "editions"  three posts a day at edition_hours: one scannable line
+    #               per story in the channel, one thread reply per story with
+    #               its full summary. Hourly posting was 14-42 posts a day,
+    #               overnight included (operator decision 2026-11-17).
+    slack_delivery_mode: Literal["cards", "hourly", "editions"] = "hourly"
+    # Local hours (edition_timezone) of the editions. The last is before the
+    # 16:00 New York digest, so the digest recaps a finished day.
+    edition_hours: list[int] = Field(default_factory=lambda: [8, 12, 15])
+    edition_timezone: str = "America/New_York"
+    # Stories shown in the channel message; every story is in the thread.
+    edition_channel_top: int = 8
+    # A story this widely covered and this important posts at once rather
+    # than waiting for the next edition.
+    breaking_min_outlets: int = 4
+    breaking_min_importance: float = 0.7
     # Ceiling on one report. A quiet hour posts what it has; a burst hour is
     # trimmed to the highest-scoring, because a Slack message has a block limit
     # and a reader has a scroll limit.

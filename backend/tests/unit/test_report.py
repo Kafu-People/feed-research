@@ -46,39 +46,39 @@ def _row(
 
 
 def test_window_is_a_full_seven_days() -> None:
-    since, until = R.week_window(_utc(2026, 9, 5, 20, 16))
+    since, until = R.week_window(_utc(2026, 9, 4, 20, 16))
     assert (until - since).days == 7
 
 
-def test_window_ends_saturday_at_the_report_hour_local() -> None:
-    _, until = R.week_window(_utc(2026, 9, 5, 20, 16))  # Sat 17:16 local
+def test_window_ends_friday_at_the_report_hour_local() -> None:
+    _, until = R.week_window(_utc(2026, 9, 4, 20, 16))  # Fri 17:16 local
     local = until.astimezone(SP)
-    assert local.weekday() == R.REPORT_WEEKDAY
+    assert local.weekday() == R.REPORT_WEEKDAY == 4
     assert (local.hour, local.minute) == (R.REPORT_HOUR, 0)
 
 
-def test_saturday_before_the_hour_reports_the_previous_week() -> None:
-    """At 14:00 local on Saturday this week is not over, so the completed week
-    is the one ending the Saturday before -- not a half-week ending today."""
-    _, until = R.week_window(_utc(2026, 9, 5, 17, 0))  # Sat 14:00 local
-    assert until.astimezone(SP).date().isoformat() == "2026-08-29"
+def test_friday_before_the_hour_reports_the_previous_week() -> None:
+    """At 14:00 local on Friday this week is not over, so the completed week
+    is the one ending the Friday before -- not a half-week ending today."""
+    _, until = R.week_window(_utc(2026, 9, 4, 17, 0))  # Fri 14:00 local
+    assert until.astimezone(SP).date().isoformat() == "2026-08-28"
 
 
-def test_saturday_after_the_hour_reports_the_week_just_closed() -> None:
-    _, until = R.week_window(_utc(2026, 9, 5, 18, 1))  # Sat 15:01 local
-    assert until.astimezone(SP).date().isoformat() == "2026-09-05"
+def test_friday_after_the_hour_reports_the_week_just_closed() -> None:
+    _, until = R.week_window(_utc(2026, 9, 4, 18, 1))  # Fri 15:01 local
+    assert until.astimezone(SP).date().isoformat() == "2026-09-04"
 
 
 def test_midweek_still_reports_the_last_closed_week() -> None:
-    """A Tuesday re-run after an outage must reproduce Saturday's roundup, not
+    """A Tuesday re-run after an outage must reproduce Friday's roundup, not
     invent a window ending on Tuesday."""
     _, until = R.week_window(_utc(2026, 9, 8, 10, 0))
-    assert until.astimezone(SP).date().isoformat() == "2026-09-05"
+    assert until.astimezone(SP).date().isoformat() == "2026-09-04"
 
 
 def test_window_is_stable_across_the_whole_week() -> None:
-    base = R.week_window(_utc(2026, 9, 5, 18, 1))
-    for day, hour in ((6, 3), (7, 12), (9, 23), (11, 6), (12, 17)):
+    base = R.week_window(_utc(2026, 9, 4, 18, 1))
+    for day, hour in ((5, 3), (6, 12), (8, 23), (10, 6), (11, 17)):
         assert R.week_window(_utc(2026, 9, day, hour)) == base
 
 

@@ -20,7 +20,7 @@ from typing import Any
 import httpx
 import websockets
 
-from techtrend.deliver import commands, discuss, qa
+from techtrend.deliver import commands, discuss, qa, reactions
 from techtrend.deliver.slack import SlackClient
 from techtrend.platform import telemetry
 from techtrend.platform.config import settings
@@ -86,6 +86,13 @@ async def _dispatch(client: SlackClient, envelope: dict[str, Any], bot_id: str |
         )
         if event.get("channel_type") in ("channel", "group") and not own:
             await discuss.handle(event, bot_id=bot_id)
+        return
+
+    # 👍 / 👎 on a story's thread reply in #feed-ai-news: team feedback that
+    # nudges the ranking. Needs the app's reactions:read scope and the
+    # reaction_added / reaction_removed subscriptions.
+    if event.get("type") in ("reaction_added", "reaction_removed"):
+        await reactions.handle(event)
         return
 
     if event.get("type") != "app_mention":
